@@ -571,9 +571,10 @@ class SwinTransformer(nn.Module):
         return x
 
     def forward(self, x):
-        x = self.forward_features(x)
-        x = self.head(x)
-        return x
+        with torch.cuda.amp.autocast():
+            x = self.forward_features(x)
+            x = self.head(x)
+            return x
 
     def flops(self):
         flops = 0

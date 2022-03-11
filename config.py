@@ -86,6 +86,18 @@ _C.MODEL.SWIN_MLP.MLP_RATIO = 4.
 _C.MODEL.SWIN_MLP.APE = False
 _C.MODEL.SWIN_MLP.PATCH_NORM = True
 
+# Below are specifical for CSAM
+_C.MODEL.CSAM = CN()
+_C.MODEL.CSAM.APPROACH_NAME = "Three"
+_C.MODEL.CSAM.ADD_POS_EMB = True
+_C.MODEL.CSAM.SOFTMAX_TEMP = 1
+_C.MODEL.CSAM.PADDING = 'same'
+_C.MODEL.CSAM.STRIDE = 1
+_C.MODEL.CSAM.APPLY_STOCHASTIC_STRIDE = False
+_C.MODEL.CSAM.USE_RESIDUAL_CONNECTION = False
+_C.MODEL.CSAM.SUFFIX = ''
+_C.MODEL.CSAM.VALUE_DIM = -1
+
 # -----------------------------------------------------------------------------
 # Training settings
 # -----------------------------------------------------------------------------
@@ -238,7 +250,8 @@ def update_config(config, args):
 
     # set local rank for distributed training
     config.LOCAL_RANK = args.local_rank
-
+    if config.MODEL.TYPE == 'csam':
+        config.TAG = name_model(config=config.MODEL.CSAM)
     # output folder
     config.OUTPUT = os.path.join(config.OUTPUT, config.MODEL.NAME, config.TAG)
 
@@ -253,3 +266,15 @@ def get_config(args):
     update_config(config, args)
 
     return config
+
+
+def name_model(config):
+    model_name = 'CSAM_Approach{}_AddPosEmb{}_Temp{}_StochStride{}_Stride{}_Residual{}'.format(
+        config.APPROACH_NAME, 
+        config.ADD_POS_EMB, 
+        config.SOFTMAX_TEMP, 
+        config.APPLY_STOCHASTIC_STRIDE, 
+        config.STRIDE,
+        config.USE_RESIDUAL_CONNECTION
+    )
+    return model_name

@@ -1,0 +1,18 @@
+MODEL:
+  TYPE: csam
+  NAME: csam_tiny_useconv_patch4_window7_224
+  DROP_PATH_RATE: 0.2
+  SWIN:
+    EMBED_DIM: 96
+    DEPTHS: [ 2, 2, 6, 2 ]
+    NUM_HEADS: [ 3, 6, 12, 24 ]
+    WINDOW_SIZE: 7
+  CSAM:
+    APPROACH_NAME: "Two"
+    ADD_POS_EMB: True
+    SOFTMAX_TEMP: 1
+    PADDING: same
+    STRIDE: 1
+    APPLY_STOCHASTIC_STRIDE: False
+    USE_RESIDUAL_CONNECTION: False
+    SUFFIX: 
