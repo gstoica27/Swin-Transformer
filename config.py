@@ -88,8 +88,8 @@ _C.MODEL.SWIN_MLP.PATCH_NORM = True
 
 # Below are specifical for CSAM
 _C.MODEL.CSAM = CN()
-_C.MODEL.CSAM.APPROACH_NAME = "Three"
-_C.MODEL.CSAM.ADD_POS_EMB = True
+_C.MODEL.CSAM.APPROACH_NAME = "Three_unmasked"
+_C.MODEL.CSAM.POS_EMB_DIM = 0
 _C.MODEL.CSAM.SOFTMAX_TEMP = 1
 _C.MODEL.CSAM.PADDING = 'same'
 _C.MODEL.CSAM.STRIDE = 1
@@ -97,6 +97,9 @@ _C.MODEL.CSAM.APPLY_STOCHASTIC_STRIDE = False
 _C.MODEL.CSAM.USE_RESIDUAL_CONNECTION = False
 _C.MODEL.CSAM.SUFFIX = ''
 _C.MODEL.CSAM.VALUE_DIM = -1
+_C.MODEL.CSAM.RANDOM_K = -1
+_C.MODEL.CSAM.FORGET_GATE_NONLINEARITY = "sigmoid"
+_C.MODEL.CSAM.SIMILARITY_METRIC = "cosine_similarity"
 
 # -----------------------------------------------------------------------------
 # Training settings
@@ -268,13 +271,27 @@ def get_config(args):
     return config
 
 
+# def name_model(config):
+#     model_name = 'CSAM_Approach{}_AddPosEmb{}_Temp{}_StochStride{}_Stride{}_Residual{}'.format(
+#         config.APPROACH_NAME, 
+#         config.ADD_POS_EMB, 
+#         config.SOFTMAX_TEMP, 
+#         config.APPLY_STOCHASTIC_STRIDE, 
+#         config.STRIDE,
+#         config.USE_RESIDUAL_CONNECTION
+#     )
+#     return model_name
+
 def name_model(config):
-    model_name = 'CSAM_Approach{}_AddPosEmb{}_Temp{}_StochStride{}_Stride{}_Residual{}'.format(
+   
+    model_name = 'CSAM_Approach{}_AddPosEmb{}_Temp{}_StochStride{}_Stride{}_Residual{}_Forget{}_SimMetr{}'.format(
         config.APPROACH_NAME, 
-        config.ADD_POS_EMB, 
+        config.POS_EMB_DIM, 
         config.SOFTMAX_TEMP, 
         config.APPLY_STOCHASTIC_STRIDE, 
         config.STRIDE,
-        config.USE_RESIDUAL_CONNECTION
+        config.USE_RESIDUAL_CONNECTION,
+        config.FORGET_GATE_NONLINEARITY,
+        config.SIMILARITY_METRIC,
     )
     return model_name

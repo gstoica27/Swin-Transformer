@@ -453,11 +453,15 @@ class SwinMLP(nn.Module):
         x = torch.flatten(x, 1)
         return x
 
-    def forward(self, x):
-        with torch.cuda.amp.autocast():
+    def forward(self, x, use_amp=True):
+        if use_amp:
+            with torch.cuda.amp.autocast():
+                x = self.forward_features(x)
+                x = self.head(x)
+        else:
             x = self.forward_features(x)
             x = self.head(x)
-            return x
+        return x
 
     def flops(self):
         flops = 0

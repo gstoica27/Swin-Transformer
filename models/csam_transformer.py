@@ -508,11 +508,17 @@ class CSAMTransformer(nn.Module):
         x = torch.flatten(x, 1)
         return x
 
-    def forward(self, x):
-        with torch.cuda.amp.autocast():
-            x = self.forward_features(x)
-            x = self.head(x)
-            return x
+    def base_forward(self, x):
+        x = self.forward_features(x)
+        x = self.head(x)
+        return x
+
+    def forward(self, x, use_amp=True):
+        if use_amp:
+            with torch.cuda.amp.autocast():
+                return self.base_forward(x)
+        else:
+            return self.base_forward(x)
 
     def flops(self):
         flops = 0

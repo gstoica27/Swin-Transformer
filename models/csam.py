@@ -34,12 +34,12 @@ class ConvolutionalSelfAttention(nn.Module):
         super(ConvolutionalSelfAttention, self).__init__()
 
         self.approach_args = approach_args
-        self.approach_name = approach_args['approach_name']
-        self.padding_type = approach_args['padding']
-        self.apply_stochastic_stride = approach_args['apply_stochastic_stride']
-        self.stride = approach_args['stride']
-        self.softmax_temp = approach_args['softmax_temp']
-        self.use_residual_connection = approach_args['use_residual_connection']
+        self.approach_name = approach_args.APPROACH_NAME
+        self.padding_type = approach_args.PADDING
+        self.apply_stochastic_stride = approach_args.APPLY_STOCHASTIC_STRIDE
+        self.stride = approach_args.STRIDE
+        self.softmax_temp = approach_args.SOFTMAX_TEMP
+        self.use_residual_connection = approach_args.USE_RESIDUAL_CONNECTION
 
         self.filter_K = filter_size
         self.filter_size = self.filter_K * self.filter_K
@@ -49,10 +49,10 @@ class ConvolutionalSelfAttention(nn.Module):
         self.spatial_H = int(self.input_H + 2 * self.padding_tuple[2])
         self.spatial_W = int(self.input_W + 2 * self.padding_tuple[0])
         
-        if 'self_attention' in self.approach_name or self.approach_args.get('pos_emb_dim', 0) < 0:
+        if 'self_attention' in self.approach_name or self.approach_args.POS_EMB_DIM < 0:
             self.pos_emb_dim = self.spatial_C
         else:
-            self.pos_emb_dim = self.approach_args.get('pos_emb_dim', 0)
+            self.pos_emb_dim = self.approach_args.POS_EMB_DIM
         # self.pos_emb_dim = self.spatial_C if 'self_attention' in self.approach_name else self.approach_args.get('pos_emb_dim', 0)
 
         h_convs, w_convs = self.get_num_convs()
@@ -158,8 +158,7 @@ class ConvolutionalSelfAttention(nn.Module):
         # self.approach_name == 'Three' or self.approach_name == 'Three_kq' or self.approach_name == 'Three_unmasked':
             self.global_transform = nn.Linear(self.X_encoding_dim, self.spatial_C)
             self.indices = np.array([(i, j) for i in range(self.convs_height) for j in range(self.convs_width)])
-            if 'random_k' in self.approach_args:
-                self.random_k = self.approach_args['random_k']
+            self.random_k = self.approach_args.RANDOM_K
             if self.approach_name == 'Three_kq':
                 self.key_transform = nn.Linear(self.X_encoding_dim, self.spatial_C)
                 self.query_transform = nn.Linear(self.X_encoding_dim, self.spatial_C)
@@ -167,9 +166,9 @@ class ConvolutionalSelfAttention(nn.Module):
                 self.cls = nn.Parameter(torch.rand(1, self.spatial_C, requires_grad=True))
                 if self.approach_name == 'Three_unmasked_cls_proj':
                     self.conv_proj = nn.Linear(self.spatial_C, self.spatial_C * self.spatial_C)
-            if self.approach_args['forget_gate_nonlinearity'] == 'sigmoid':
+            if self.approach_args.FORGET_GATE_NONLINEARITY == 'sigmoid':
                 self.forget_gate_nonlinearity = self.apply_local_sigmoid
-            elif self.approach_args['forget_gate_nonlinearity'] == 'softmax':
+            elif self.approach_args.FORGET_GATE_NONLINEARITY == 'softmax':
                 self.forget_gate_nonlinearity = self.apply_local_softmax
             
         elif self.approach_name == 'Four' or self.approach_name == 'Four_mem_efficient':
@@ -195,11 +194,11 @@ class ConvolutionalSelfAttention(nn.Module):
                     elem_scales_init = F.normalize(elem_scales_init, dim=0)
                     elem_scales_init = elem_scales_init.view(self.spatial_H, self.spatial_W, 1)
                 self.elem_scales = nn.Parameter(elem_scales_init)
-            elif self.approach_name == 'self_attention_cpg':
-                value_dim = self.approach_args['value_dim']
-                if value_dim < 0: value_dim = self.spatial_C
-                self.value_transform = nn.Linear(self.spatial_C, value_dim)
-                self.cpg = nn.Linear(self.spatial_C, self.spatial_C * value_dim)
+            # elif self.approach_name == 'self_attention_cpg':
+            #     value_dim = self.approach_args['value_dim']
+            #     if value_dim < 0: value_dim = self.spatial_C
+            #     self.value_transform = nn.Linear(self.spatial_C, value_dim)
+            #     self.cpg = nn.Linear(self.spatial_C, self.spatial_C * value_dim)
         elif self.approach_name in {'gaussian_blur', 'box_filter'}: pass
         else:
             raise ValueError('Invalid Approach type')
@@ -403,9 +402,9 @@ class ConvolutionalSelfAttention(nn.Module):
         values = self.global_transform(X)                                                                               # [B,HW,C]
 
         X_normed = F.normalize(X, dim=-1)                                                                               # [B,HW,C]
-        if self.approach_args["similarity_metric"] == 'cosine_similarity':
+        if self.approach_args.SIMILARITY_METRIC == 'cosine_similarity':
             scores = torch.bmm(X_normed, X_normed.transpose(2, 1))                                                      # [B,HW,HW]
-        elif self.approach_args["similarity_metric"] == 'dot_product':
+        elif self.approach_args.SIMILARITY_METRIC == 'dot_product':
             scores = torch.bmm(X, X.transpose(2, 1))                                                                    # [B,HW,HW]
         attn = self.masked_softmax(                                                                                     # [B,HW,HW]
             scores, 
@@ -432,9 +431,9 @@ class ConvolutionalSelfAttention(nn.Module):
 
         X_normed = F.normalize(X, dim=-1)                                                                               # [B,HW,C]
         cls_normed = F.normalize(self.cls, dim=-1)                                                                      # [B,1,C]
-        if self.approach_args["similarity_metric"] == 'cosine_similarity':
+        if self.approach_args.SIMILARITY_METRIC == 'cosine_similarity':
             scores = torch.matmul(X_normed, cls_normed.transpose(1, 0)).transpose(2, 1)                                 # [B,HW,C] x ([1,HW] -> [HW,1]) -> [B,HW,1] -> [B,1,HW]
-        elif self.approach_args["similarity_metric"] == 'dot_product':
+        elif self.approach_args.SIMILARITY_METRIC == 'dot_product':
             scores = torch.matmul(X, self.cls.transpose(1, 0)).transpose(2, 1)                                          # [B,HW,C] x ([1,HW] -> [HW,1]) -> [B,HW,1] -> [B,1,HW]
         attn = self.masked_softmax(                                                                                     # [B,1,HW]
             scores, 
@@ -457,9 +456,9 @@ class ConvolutionalSelfAttention(nn.Module):
         values = self.global_transform(X)                                                                               # [B,HW,C]
 
         X_normed = F.normalize(X, dim=-1)                                                                               # [B,HW,C]
-        if self.approach_args["similarity_metric"] == 'cosine_similarity':
+        if self.approach_args.SIMILARITY_METRIC == 'cosine_similarity':
             scores = torch.bmm(X_normed, X_normed.transpose(2, 1))                                                      # [B,HW,HW]
-        elif self.approach_args["similarity_metric"] == 'dot_product':
+        elif self.approach_args.SIMILARITY_METRIC == 'dot_product':
             scores = torch.bmm(X, X.transpose(2, 1))                                                                    # [B,HW,HW]
         
         attn = self.masked_softmax(                                                                                     # [B,HW,HW]
@@ -486,9 +485,9 @@ class ConvolutionalSelfAttention(nn.Module):
 
         X_normed = F.normalize(X, dim=-1)                                                                               # [B,HW,C]
         cls_normed = F.normalize(self.cls, dim=-1)
-        if self.approach_args["similarity_metric"] == 'cosine_similarity':
+        if self.approach_args.SIMILARITY_METRIC == 'cosine_similarity':
             scores = torch.matmul(X_normed, cls_normed.transpose(1, 0)).transpose(2, 1)                                 # [B,HW,C] x ([1,HW] -> [HW,1]) -> [B,HW,1] -> [B,1,HW]
-        elif self.approach_args["similarity_metric"] == 'dot_product':
+        elif self.approach_args.SIMILARITY_METRIC == 'dot_product':
             scores = torch.matmul(X, self.cls.transpose(1, 0)).transpose(2, 1)                                          # [B,HW,C] x ([1,HW] -> [HW,1]) -> [B,HW,1] -> [B,1,HW]
         attn = self.masked_softmax(                                                                                     # [B,1,HW]
             scores, 
@@ -586,7 +585,7 @@ class ConvolutionalSelfAttention(nn.Module):
             keys = self.key_transform(X)
             queries = self.query_transform(X)
             denom = math.sqrt(queries.shape[-1])
-        elif self.approach_args["similarity_metric"] == 'dot_product':
+        elif self.approach_args.SIMILARITY_METRIC == 'dot_product':
             keys = X
             queries = X
             denom = 1.
@@ -846,6 +845,7 @@ class ConvolutionalSelfAttention(nn.Module):
         """
         Input shape expected to be [B,C,H,W]
         """
+        batch = batch.permute(0, 3, 1, 2)
         batch = self.input_padder(batch)                                                                                # Pad batch for resolution reduction/preservation
         batch = batch.permute(0, 2, 3, 1)                                                                               # [B,C,H,W] -> [B,H,W,C]
         output = self.name2approach[self.approach_name](batch)                                                          # [B,C,F,F] -> [B,F,F,C]
@@ -856,7 +856,7 @@ class ConvolutionalSelfAttention(nn.Module):
         return output
 
     def flops(self, N):
-        if self.approach_name == 'Three':
+        if 'Three' in self.approach_name:
             flops = 0
             # Apply Global Transform
             flops += self.spatial_H * self.spatial_W * self.spatial_C * self.spatial_C

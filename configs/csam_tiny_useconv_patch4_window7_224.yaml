@@ -8,11 +8,14 @@ MODEL:
     NUM_HEADS: [ 3, 6, 12, 24 ]
     WINDOW_SIZE: 7
   CSAM:
-    APPROACH_NAME: "Two"
-    ADD_POS_EMB: True
+    APPROACH_NAME: "Three_unmasked"
+    POS_EMB_DIM: 0
     SOFTMAX_TEMP: 1
     PADDING: same
     STRIDE: 1
     APPLY_STOCHASTIC_STRIDE: False
     USE_RESIDUAL_CONNECTION: False
     SUFFIX: 
+    RANDOM_K: -1
+    FORGET_GATE_NONLINEARITY: "sigmoid"
+    SIMILARITY_METRIC: "cosine_similarity"

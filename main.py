@@ -180,9 +180,9 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
 
         if config.AMP_OPT_LEVEL != 'O0':
             with amp.autocast():
-                outputs = model(samples)
+                outputs = model(samples, use_amp=True)
         else:
-            outputs = model(samples)
+            outputs = model(samples, use_amp=False)
 
         if config.TRAIN.ACCUMULATION_STEPS > 1:
             if config.AMP_OPT_LEVEL != 'O0':
@@ -309,7 +309,7 @@ def validate(config, data_loader, model):
         target = target.cuda(non_blocking=True)
 
         # compute output
-        output = model(images)
+        output = model(images, use_amp=False)
 
         # measure accuracy and record loss
         loss = criterion(output, target)
@@ -348,12 +348,12 @@ def throughput(data_loader, model, logger):
         images = images.cuda(non_blocking=True)
         batch_size = images.shape[0]
         for i in range(50):
-            model(images)
+            model(images, use_amp=False)
         torch.cuda.synchronize()
         logger.info(f"throughput averaged with 30 times")
         tic1 = time.time()
         for i in range(30):
-            model(images)
+            model(images, use_amp=False)
         torch.cuda.synchronize()
         tic2 = time.time()
         logger.info(f"batch_size {batch_size} throughput {30 * batch_size / (tic2 - tic1)}")
