@@ -1,6 +1,6 @@
 MODEL:
   TYPE: csam
-  NAME: csam_tiny_useconv_patch4_window7_224
+  NAME: csam_tiny_patch4_window7_224
   DROP_PATH_RATE: 0.2
   SWIN:
     EMBED_DIM: 96

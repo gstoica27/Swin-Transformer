@@ -110,7 +110,8 @@ def main(config):
     else:
         criterion = torch.nn.CrossEntropyLoss()
 
-    max_accuracy = 0.0
+    max_valid_accuracy = 0.0
+    max_valid_top_five = 0.0
     scaler = torch.cuda.amp.GradScaler()
 
     if config.TRAIN.AUTO_RESUME:
@@ -126,7 +127,7 @@ def main(config):
             logger.info(f'no checkpoint found in {config.OUTPUT}, ignoring auto resume')
 
     if config.MODEL.RESUME:
-        max_accuracy = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger, scaler)
+        max_valid_accuracy = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger, scaler)
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         if config.EVAL_MODE:
@@ -148,12 +149,20 @@ def main(config):
 
         train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler, scaler=scaler)
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
-            save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger, scaler)
+            save_checkpoint(config, epoch, model_without_ddp, max_valid_accuracy, optimizer, lr_scheduler, logger, scaler)
 
         acc1, acc5, loss = validate(config, data_loader_val, model)
-        logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
-        max_accuracy = max(max_accuracy, acc1)
-        logger.info(f'Max accuracy: {max_accuracy:.2f}%')
+        logger.info(f"Accuracy of the network on the {len(dataset_val)} val images: Top1: {acc1:.2f}% | Top5: {acc5:.2f}")
+        max_valid_accuracy = max(max_valid_accuracy, acc1)
+        max_valid_top_five = max(max_valid_top_five, acc5)
+        logger.info(f'Max valid accuracy | Top1: {max_valid_accuracy:.2f}% | Top5: {max_valid_top_five:.2f}')
+        # if data_loader_test is not None:
+        #     test_acc1, test_acc5, test_loss = validate(config, data_loader_test, model)
+        #     logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: Top1: {test_acc1:.2f}% | Top5: {test_acc5:.2f}")
+        #     update_test = max_valid_accuracy == acc1
+        #     test_accuracy_at_best_valid = test_acc1 if update_test else test_accuracy_at_best_valid
+        #     test_top5_at_best_valid = test_acc5 if update_test else test_top5_at_best_valid
+        #     logger.info(f'Max test accuracy: Top1: {test_accuracy_at_best_valid:.2f}% | Top5: {test_top5_at_best_valid: .2f}')
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -212,6 +221,8 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 #     grad_norm = get_grad_norm(amp.master_params(optimizer))
             
             else:
+                #  with torch.autograd.detect_anomaly():
+                # pdb.set_trace()
                 loss = criterion(outputs, targets)
                 loss = loss / config.TRAIN.ACCUMULATION_STEPS
                 loss.backward()
@@ -220,6 +231,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 else:
                     grad_norm = get_grad_norm(model.parameters())
                 if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
+                    # pdb.set_trace()
                     optimizer.step()
                     optimizer.zero_grad()
                     lr_scheduler.step_update(epoch * num_steps + idx)

@@ -1,0 +1,12 @@
+DATA:
+  DATASET: cifar100
+  DATA_PATH: /nethome/gstoica3/research/pytorch-cifar100/data/cifar-100-python
+MODEL:
+  TYPE: swin
+  NAME: swin_tiny_patch4_window7_224_cifar100
+  DROP_PATH_RATE: 0.2
+  SWIN:
+    EMBED_DIM: 96
+    DEPTHS: [ 2, 2, 6, 2 ]
+    NUM_HEADS: [ 3, 6, 12, 24 ]
+    WINDOW_SIZE: 7

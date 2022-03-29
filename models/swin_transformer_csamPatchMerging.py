@@ -225,7 +225,7 @@ class PatchMerging(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm, approach_args=None):
+    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm, approach_args={}):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
@@ -270,18 +270,27 @@ class CSAMMerging(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        
+
         self.norm = norm_layer(self.dim)
         self.csam = ConvolutionalSelfAttention(
-            spatial_shape=self.input_resolution + [dim],
+            spatial_shape=list(self.input_resolution) + [dim],
             filter_size=2,
             approach_args=approach_args
         )
 
     def forward(self, x):
+        H, W = self.input_resolution
+        B, L, C = x.shape
+        assert L == H * W, "input feature has wrong size"
+        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+
+        x = x.view(B, H, W, C)
+
         x = self.norm(x)
-        x = self.csam(x)
-        return x
+        # if H == 14: pdb.set_trace()
+        x1 = self.csam(x)
+        # pdb.set_trace()
+        return x1.flatten(1, 2)
     
     def flops(self):
         H, W = self.input_resolution
@@ -317,7 +326,6 @@ class CSAMBasicLayer(nn.Module):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
-        depth = 1
         self.depth = depth
         self.use_checkpoint = use_checkpoint
 
@@ -343,7 +351,7 @@ class CSAMBasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x):
-        is_nan(x) 
+        is_nan(x)
         for blk in self.blocks:
             if self.use_checkpoint:
                 y = checkpoint.checkpoint(blk, x)
@@ -416,7 +424,7 @@ class PatchEmbed(nn.Module):
         return flops
 
 
-class CSAMTransformer(nn.Module):
+class CSAMMergeTransformer(nn.Module):
     r""" Swin Transformer
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
           https://arxiv.org/pdf/2103.14030
@@ -481,36 +489,45 @@ class CSAMTransformer(nn.Module):
         # build layers
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
-            if i_layer in approach_args.INJECTION_LOCATIONS:
-                layer = CSAMBasicLayer(dim=int(embed_dim * 2 ** i_layer),
-                                input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                                    patches_resolution[1] // (2 ** i_layer)),
-                                depth=depths[i_layer],
-                                num_heads=num_heads[i_layer],
-                                window_size=window_size,
-                                mlp_ratio=self.mlp_ratio,
-                                qkv_bias=qkv_bias, qk_scale=qk_scale,
-                                drop=drop_rate, attn_drop=attn_drop_rate,
-                                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                                norm_layer=norm_layer,
-                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
-                                use_checkpoint=use_checkpoint, 
-                                approach_args=approach_args
-                            )
+            # if i_layer in approach_args.INJECTION_LOCATIONS:
+            #     layer = CSAMBasicLayer(dim=int(embed_dim * 2 ** i_layer),
+            #                     input_resolution=(patches_resolution[0] // (2 ** i_layer),
+            #                                         patches_resolution[1] // (2 ** i_layer)),
+            #                     depth=depths[i_layer],
+            #                     num_heads=num_heads[i_layer],
+            #                     window_size=window_size,
+            #                     mlp_ratio=self.mlp_ratio,
+            #                     qkv_bias=qkv_bias, qk_scale=qk_scale,
+            #                     drop=drop_rate, attn_drop=attn_drop_rate,
+            #                     drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+            #                     norm_layer=norm_layer,
+            #                     downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
+            #                     use_checkpoint=use_checkpoint, 
+            #                     approach_args=approach_args
+            #                 )
+            # else:
+            if i_layer not in approach_args.INJECTION_LOCATIONS and (i_layer < self.num_layers - 1):
+                downsample = PatchMerging
+            elif i_layer in approach_args.INJECTION_LOCATIONS and (i_layer < self.num_layers - 1):
+                downsample = CSAMMerging
             else:
-                layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
-                               input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                                 patches_resolution[1] // (2 ** i_layer)),
-                               depth=depths[i_layer],
-                               num_heads=num_heads[i_layer],
-                               window_size=window_size,
-                               mlp_ratio=self.mlp_ratio,
-                               qkv_bias=qkv_bias, qk_scale=qk_scale,
-                               drop=drop_rate, attn_drop=attn_drop_rate,
-                               drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                               norm_layer=norm_layer,
-                               downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
-                               use_checkpoint=use_checkpoint)
+                downsample = None
+                
+            layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
+                            input_resolution=(patches_resolution[0] // (2 ** i_layer),
+                                                patches_resolution[1] // (2 ** i_layer)),
+                            depth=depths[i_layer],
+                            num_heads=num_heads[i_layer],
+                            window_size=window_size,
+                            mlp_ratio=self.mlp_ratio,
+                            qkv_bias=qkv_bias, qk_scale=qk_scale,
+                            drop=drop_rate, attn_drop=attn_drop_rate,
+                            drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                            norm_layer=norm_layer,
+                            downsample=downsample,
+                            use_checkpoint=use_checkpoint, 
+                            approach_args=approach_args
+                            )
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)

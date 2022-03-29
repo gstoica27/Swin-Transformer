@@ -44,8 +44,9 @@ def load_checkpoint(config, model, optimizer, lr_scheduler, logger, scaler):
     return max_accuracy
 
 
-def load_pretrained(config, model, logger):
-    logger.info(f"==============> Loading weight {config.MODEL.PRETRAINED} for fine-tuning......")
+def load_pretrained(config, model, logger=None):
+    if logger is not None:
+        logger.info(f"==============> Loading weight {config.MODEL.PRETRAINED} for fine-tuning......")
     checkpoint = torch.load(config.MODEL.PRETRAINED, map_location='cpu')
     state_dict = checkpoint['model']
 
@@ -72,7 +73,8 @@ def load_pretrained(config, model, logger):
         L1, nH1 = relative_position_bias_table_pretrained.size()
         L2, nH2 = relative_position_bias_table_current.size()
         if nH1 != nH2:
-            logger.warning(f"Error in loading {k}, passing......")
+            if logger is not None:
+                logger.warning(f"Error in loading {k}, passing......")
         else:
             if L1 != L2:
                 # bicubic interpolate relative_position_bias_table if not match
@@ -92,7 +94,8 @@ def load_pretrained(config, model, logger):
         _, L1, C1 = absolute_pos_embed_pretrained.size()
         _, L2, C2 = absolute_pos_embed_current.size()
         if C1 != C1:
-            logger.warning(f"Error in loading {k}, passing......")
+            if logger is not None:
+                logger.warning(f"Error in loading {k}, passing......")
         else:
             if L1 != L2:
                 S1 = int(L1 ** 0.5)
@@ -111,7 +114,8 @@ def load_pretrained(config, model, logger):
     Nc2 = model.head.bias.shape[0]
     if (Nc1 != Nc2):
         if Nc1 == 21841 and Nc2 == 1000:
-            logger.info("loading ImageNet-22K weight to ImageNet-1K ......")
+            if logger is not None:
+                logger.info("loading ImageNet-22K weight to ImageNet-1K ......")
             map22kto1k_path = f'data/map22kto1k.txt'
             with open(map22kto1k_path) as f:
                 map22kto1k = f.readlines()
@@ -123,12 +127,13 @@ def load_pretrained(config, model, logger):
             torch.nn.init.constant_(model.head.weight, 0.)
             del state_dict['head.weight']
             del state_dict['head.bias']
-            logger.warning(f"Error in loading classifier head, re-init classifier head to 0")
+            if logger is not None:
+                logger.warning(f"Error in loading classifier head, re-init classifier head to 0")
 
     msg = model.load_state_dict(state_dict, strict=False)
-    logger.warning(msg)
-
-    logger.info(f"=> loaded successfully '{config.MODEL.PRETRAINED}'")
+    if logger is not None:
+        logger.warning(msg)
+        logger.info(f"=> loaded successfully '{config.MODEL.PRETRAINED}'")
 
     del checkpoint
     torch.cuda.empty_cache()
