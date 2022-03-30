@@ -224,6 +224,10 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 #  with torch.autograd.detect_anomaly():
                 # pdb.set_trace()
                 loss = criterion(outputs, targets)
+                if loss.isnan():
+                    pdb.set_trace()
+                    del loss
+                    continue
                 loss = loss / config.TRAIN.ACCUMULATION_STEPS
                 loss.backward()
                 if config.TRAIN.CLIP_GRAD:

@@ -105,6 +105,8 @@ _C.MODEL.CSAM.SIMILARITY_METRIC = "cosine_similarity"
 _C.MODEL.CSAM.INJECTION_LOCATIONS = [0]
 _C.MODEL.CSAM.OUTPUT_SCALAR = 2.
 _C.MODEL.CSAM.FILTER_SIZE = 3
+_C.MODEL.CSAM.OUTPUT_PROJECTION = False
+_C.MODEL.CSAM.ADD_BATCH_NORM = False
 
 # -----------------------------------------------------------------------------
 # Training settings

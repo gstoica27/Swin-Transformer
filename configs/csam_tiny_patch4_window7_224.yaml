@@ -1,5 +1,8 @@
+DATA:
+  DATASET: imagenet
+  DATA_PATH: /srv/datasets/ImageNet
 MODEL:
-  TYPE: csam
+  TYPE: csam_inj_swin
   NAME: csam_tiny_patch4_window7_224
   DROP_PATH_RATE: 0.2
   SWIN:
@@ -7,8 +10,10 @@ MODEL:
     DEPTHS: [ 2, 2, 6, 2 ]
     NUM_HEADS: [ 3, 6, 12, 24 ]
     WINDOW_SIZE: 7
+    SUMMARY_TYPE: 'none'
+    SUMMARY_LAYERS: [0, 1, 2, 3, 4, 5, 6, 7]
   CSAM:
-    APPROACH_NAME: "Three_unmasked"
+    APPROACH_NAME: "Three_unmasked_base"
     POS_EMB_DIM: 0
     SOFTMAX_TEMP: 1
     PADDING: same
@@ -17,5 +22,10 @@ MODEL:
     USE_RESIDUAL_CONNECTION: False
     SUFFIX: 
     RANDOM_K: -1
-    FORGET_GATE_NONLINEARITY: "sigmoid"
+    FORGET_GATE_TYPE: "sigmoid"
     SIMILARITY_METRIC: "cosine_similarity"
+    INJECTION_LOCATIONS: []
+    OUTPUT_SCALAR: 1.
+    FILTER_SIZE: 3
+    OUTPUT_PROJECTION: False
+    ADD_BATCH_NORM: False

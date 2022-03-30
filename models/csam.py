@@ -44,6 +44,9 @@ class ConvolutionalSelfAttention(nn.Module):
         self.input_padder = self.compute_padding(self.padding_type)
         self.spatial_H = int(self.input_H + 2 * self.padding_tuple[2])
         self.spatial_W = int(self.input_W + 2 * self.padding_tuple[0])
+
+        if self.approach_args.ADD_BATCH_NORM:
+            self.bn = nn.BatchNorm2d(self.spatial_C)
         
         if 'self_attention' in self.approach_name or self.approach_args.POS_EMB_DIM < 0:
             self.pos_emb_dim = self.spatial_C
@@ -152,6 +155,11 @@ class ConvolutionalSelfAttention(nn.Module):
             self.query_transform = nn.Linear(self.X_encoding_dim, self.spatial_C)
         elif self.approach_name == 'Three_unmasked_base':
             self.global_transform = nn.Linear(self.X_encoding_dim, self.spatial_C)
+            if self.approach_args.SIMILARITY_METRIC == 'dot_product':
+                self.key_proj = nn.Linear(self.X_encoding_dim, self.spatial_C)
+                self.query_proj = nn.Linear(self.X_encoding_dim, self.spatial_C)
+            if self.approach_args.OUTPUT_PROJECTION:
+                self.output_proj = nn.Linear(self.X_encoding_dim, self.spatial_C)
             if self.approach_args.FORGET_GATE_TYPE == 'sigmoid':
                 self.forget_gate_nonlinearity = self.apply_local_sigmoid
             elif self.approach_args.FORGET_GATE_TYPE == 'softmax':
@@ -452,7 +460,10 @@ class ConvolutionalSelfAttention(nn.Module):
         if self.approach_args.SIMILARITY_METRIC == 'cosine_similarity':
             scores = torch.bmm(X_normed, X_normed.transpose(2, 1))                                                      # [B,HW,HW]
         elif self.approach_args.SIMILARITY_METRIC == 'dot_product':
-            scores = torch.bmm(X, X.transpose(2, 1))                                                                    # [B,HW,HW]
+            key = self.key_proj(X)
+            query = self.query_proj(X)
+            query = query / np.sqrt(query.shape[-1])
+            scores = torch.bmm(query, key.transpose(2, 1))                                                              # [B,HW,HW]
         attn = self.masked_softmax(                                                                                     # [B,HW,HW]
             scores, 
             mask=valid_elements.flatten().unsqueeze(0).unsqueeze(0),                                                    # Mask out padding indices [1, 1, HW]
@@ -464,6 +475,8 @@ class ConvolutionalSelfAttention(nn.Module):
         # weighted_X = self.forget_gate_nonlinearity(filter_vals) * X                                                   # [B,HW,C] x [B,HW,1] -> [B,HW,C]
         # output = torch.matmul(weighted_X.transpose(2, 1), local_mask).transpose(2, 1)                                 # [B,C,HW] x [HW,Nc] -> [B,C,Nc]
         output = self.forget_gate_nonlinearity(filter_raw=filter_vals, pooling_features=X)
+        if hasattr(self.approach_args, 'OUTPUT_PROJECTION') and self.approach_args.OUTPUT_PROJECTION:
+            output = self.output_proj(output)
         return output.reshape(
             batch_size, self.convs_height, self.convs_width, self.output_dim
         )
@@ -907,6 +920,10 @@ class ConvolutionalSelfAttention(nn.Module):
         batch = self.input_padder(batch)                                                                                # Pad batch for resolution reduction/preservation
         batch = batch.permute(0, 2, 3, 1)                                                                               # [B,C,H,W] -> [B,H,W,C]
         output = self.name2approach[self.approach_name](batch)                                                          # [B,C,F,F] -> [B,F,F,C]
+        if hasattr(self.approach_args, 'ADD_BATCH_NORM') and self.approach_args.ADD_BATCH_NORM:
+            output = output.permute(0, 3, 1, 2)
+            output = self.bn(output)
+            output = output.permute(0, 2, 3, 1)
         if self.use_residual_connection:
             residual = self.undo_padding(batch.permute(0, 3, 1, 2))
             output = output.permute(0, 3, 1, 2)                                                                         # [B,F,F,C] -> [B,C,F,F]
