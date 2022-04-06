@@ -75,6 +75,12 @@ _C.MODEL.SWIN.APE = False
 _C.MODEL.SWIN.PATCH_NORM = True
 _C.MODEL.SWIN.SUMMARY_TYPE = 'none'
 _C.MODEL.SWIN.SUMMARY_LAYERS = []
+_C.MODEL.SWIN.REVERSE_ATTENTION_LOCATIONS = []
+
+_C.MODEL.SWIN.ALTERED_ATTENTION = CN()
+_C.MODEL.SWIN.ALTERED_ATTENTION.TYPE = 'forward'
+_C.MODEL.SWIN.ALTERED_ATTENTION.REDUCE_REVERSE = False
+_C.MODEL.SWIN.ALTERED_ATTENTION.REVERSE_ACTIVATION = 'none'
 
 # Swin MLP parameters
 _C.MODEL.SWIN_MLP = CN()
@@ -107,16 +113,17 @@ _C.MODEL.CSAM.OUTPUT_SCALAR = 2.
 _C.MODEL.CSAM.FILTER_SIZE = 3
 _C.MODEL.CSAM.OUTPUT_PROJECTION = False
 _C.MODEL.CSAM.ADD_BATCH_NORM = False
+_C.MODEL.CSAM.ADD_LAYER_NORM = False
 
 # -----------------------------------------------------------------------------
 # Training settings
 # -----------------------------------------------------------------------------
 _C.TRAIN = CN()
 _C.TRAIN.START_EPOCH = 0
-_C.TRAIN.EPOCHS = 300
+_C.TRAIN.EPOCHS = 330
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
-_C.TRAIN.BASE_LR = 5e-4
+_C.TRAIN.BASE_LR = 5e-4 # TODO: Revert back to 5e-4
 _C.TRAIN.WARMUP_LR = 5e-7
 _C.TRAIN.MIN_LR = 5e-6
 # Clip gradient norm

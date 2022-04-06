@@ -583,6 +583,7 @@ class CSAMInjSwinTransformer(nn.Module):
         return {'relative_position_bias_table'}
 
     def forward_features(self, x):
+        # pdb.set_trace()
         x = self.patch_embed(x)
         if self.ape:
             x = x + self.absolute_pos_embed

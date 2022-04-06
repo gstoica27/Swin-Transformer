@@ -44,9 +44,12 @@ class ConvolutionalSelfAttention(nn.Module):
         self.input_padder = self.compute_padding(self.padding_type)
         self.spatial_H = int(self.input_H + 2 * self.padding_tuple[2])
         self.spatial_W = int(self.input_W + 2 * self.padding_tuple[0])
-
-        if self.approach_args.ADD_BATCH_NORM:
+        self.bn_flag = hasattr(self.approach_args, 'ADD_BATCH_NORM') and self.approach_args.ADD_BATCH_NORM
+        self.ln_flag = hasattr(self.approach_args, 'ADD_LAYER_NORM') and self.approach_args.ADD_LAYER_NORM
+        if self.bn_flag:
             self.bn = nn.BatchNorm2d(self.spatial_C)
+        if not self.bn_flag and self.ln_flag:
+            self.bn = nn.LayerNorm([self.spatial_C, self.input_H, self.input_W])
         
         if 'self_attention' in self.approach_name or self.approach_args.POS_EMB_DIM < 0:
             self.pos_emb_dim = self.spatial_C
@@ -418,26 +421,29 @@ class ConvolutionalSelfAttention(nn.Module):
         X = X.view(-1, H * W, X.shape[-1])                                                                              # [B,HW,E]
         values = self.global_transform(X)                                                                               # [B,HW,C]
         local_values = self.local_transform(X)
+        
+        if not self.approach_args.SIMILARITY_METRIC == 'avg_pool':
+            if self.approach_args.SIMILARITY_METRIC == 'cosine_similarity':
+                X_normed = F.normalize(X, dim=-1)                                                                           # [B,HW,C]
+                scores = torch.bmm(X_normed, X_normed.transpose(2, 1))                                                      # [B,HW,HW]
+            elif self.approach_args.SIMILARITY_METRIC == 'dot_product':
+                if 'kq' in self.approach_name:
+                    keys = self.key_transform(X)
+                    queries = self.query_transform(X)
+                    denom = math.sqrt(queries.shape[-1])
+                else:
+                    keys = queries = X
+                    denom = 1.
+                scores = torch.bmm(queries, keys.transpose(2, 1) / denom)                                                           # [B,HW,HW]
+            attn = self.masked_softmax(                                                                                     # [B,HW,HW]
+                scores, 
+                mask=valid_elements,                                                                                        # Mask out padding indices [1, 1, HW]
+                dim=-1, epsilon=1e-5 
+            )                                                                                                               # [B,HW,HW]
 
-        if self.approach_args.SIMILARITY_METRIC == 'cosine_similarity':
-            X_normed = F.normalize(X, dim=-1)                                                                           # [B,HW,C]
-            scores = torch.bmm(X_normed, X_normed.transpose(2, 1))                                                      # [B,HW,HW]
-        elif self.approach_args.SIMILARITY_METRIC == 'dot_product':
-            if 'kq' in self.approach_name:
-                keys = self.key_transform(X)
-                queries = self.query_transform(X)
-                denom = math.sqrt(queries.shape[-1])
-            else:
-                keys = queries = X
-                denom = 1.
-            scores = torch.bmm(queries, keys.transpose(2, 1) / denom)                                                           # [B,HW,HW]
-        attn = self.masked_softmax(                                                                                     # [B,HW,HW]
-            scores, 
-            mask=valid_elements,                                                                                        # Mask out padding indices [1, 1, HW]
-            dim=-1, epsilon=1e-5 
-        )                                                                                                               # [B,HW,HW]
-
-        filter_vecs = torch.bmm(attn, values)                                                                           # [B,HW,C]
+            filter_vecs = torch.bmm(attn, values)                                                                           # [B,HW,C]
+        else:
+            filter_vecs = values.mean(1, keepdim=True)
         filter_vals = (filter_vecs * X).sum(-1, keepdim=True)                                                           # [B,HW,C] x [B,HW,C] -> [B,HW,1]
         # weighted_X = self.forget_gate_nonlinearity(filter_vals) * X                                                   # [B,HW,C] x [B,HW,1] -> [B,HW,C]
         # output = torch.matmul(weighted_X.transpose(2, 1), local_mask).transpose(2, 1)                                 # [B,C,HW] x [HW,Nc] -> [B,C,Nc]
@@ -455,22 +461,24 @@ class ConvolutionalSelfAttention(nn.Module):
         batch_size, H, W, _ = X.shape
         X = X.view(-1, H * W, X.shape[-1])                                                                              # [B,HW,E]
         values = self.global_transform(X)                                                                               # [B,HW,C]
+        if not self.approach_args.SIMILARITY_METRIC == 'avg_pool':
+            X_normed = F.normalize(X, dim=-1)                                                                               # [B,HW,C]
+            if self.approach_args.SIMILARITY_METRIC == 'cosine_similarity':
+                scores = torch.bmm(X_normed, X_normed.transpose(2, 1))                                                      # [B,HW,HW]
+            elif self.approach_args.SIMILARITY_METRIC == 'dot_product':
+                key = self.key_proj(X)
+                query = self.query_proj(X)
+                query = query / np.sqrt(query.shape[-1])
+                scores = torch.bmm(query, key.transpose(2, 1))                                                              # [B,HW,HW]
+            attn = self.masked_softmax(                                                                                     # [B,HW,HW]
+                scores, 
+                mask=valid_elements.flatten().unsqueeze(0).unsqueeze(0),                                                    # Mask out padding indices [1, 1, HW]
+                dim=-1, epsilon=1e-5 
+            )                                                                                                               # [B,HW,HW]
 
-        X_normed = F.normalize(X, dim=-1)                                                                               # [B,HW,C]
-        if self.approach_args.SIMILARITY_METRIC == 'cosine_similarity':
-            scores = torch.bmm(X_normed, X_normed.transpose(2, 1))                                                      # [B,HW,HW]
-        elif self.approach_args.SIMILARITY_METRIC == 'dot_product':
-            key = self.key_proj(X)
-            query = self.query_proj(X)
-            query = query / np.sqrt(query.shape[-1])
-            scores = torch.bmm(query, key.transpose(2, 1))                                                              # [B,HW,HW]
-        attn = self.masked_softmax(                                                                                     # [B,HW,HW]
-            scores, 
-            mask=valid_elements.flatten().unsqueeze(0).unsqueeze(0),                                                    # Mask out padding indices [1, 1, HW]
-            dim=-1, epsilon=1e-5 
-        )                                                                                                               # [B,HW,HW]
-
-        filter_vecs = torch.bmm(attn, values)                                                                           # [B,HW,C]
+            filter_vecs = torch.bmm(attn, values)                                                                           # [B,HW,C]
+        else:
+            filter_vecs = (values.sum(1, keepdim=True) * valid_elements.flatten().unsqueeze(0).unsqueeze(-1)) / valid_elements.sum()
         filter_vals = (filter_vecs * X).sum(-1, keepdim=True)                                                           # [B,HW,C] x [B,HW,C] -> [B,HW,1]
         # weighted_X = self.forget_gate_nonlinearity(filter_vals) * X                                                   # [B,HW,C] x [B,HW,1] -> [B,HW,C]
         # output = torch.matmul(weighted_X.transpose(2, 1), local_mask).transpose(2, 1)                                 # [B,C,HW] x [HW,Nc] -> [B,C,Nc]
@@ -920,7 +928,7 @@ class ConvolutionalSelfAttention(nn.Module):
         batch = self.input_padder(batch)                                                                                # Pad batch for resolution reduction/preservation
         batch = batch.permute(0, 2, 3, 1)                                                                               # [B,C,H,W] -> [B,H,W,C]
         output = self.name2approach[self.approach_name](batch)                                                          # [B,C,F,F] -> [B,F,F,C]
-        if hasattr(self.approach_args, 'ADD_BATCH_NORM') and self.approach_args.ADD_BATCH_NORM:
+        if self.bn_flag or self.ln_flag:
             output = output.permute(0, 3, 1, 2)
             output = self.bn(output)
             output = output.permute(0, 2, 3, 1)

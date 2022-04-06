@@ -24,8 +24,9 @@ MODEL:
     RANDOM_K: -1
     FORGET_GATE_TYPE: "sigmoid"
     SIMILARITY_METRIC: "cosine_similarity"
-    INJECTION_LOCATIONS: []
+    INJECTION_LOCATIONS: [1]
     OUTPUT_SCALAR: 1.
     FILTER_SIZE: 3
     OUTPUT_PROJECTION: False
     ADD_BATCH_NORM: False
+    ADD_LAYER_NORM: False
