@@ -20,7 +20,6 @@ from .samplers import SubsetRandomSampler
 try:
     from torchvision.transforms import InterpolationMode
 
-
     def _pil_interp(method):
         if method == 'bicubic':
             return InterpolationMode.BICUBIC
@@ -33,6 +32,10 @@ try:
             return InterpolationMode.BILINEAR
 except:
     from timm.data.transforms import _pil_interp
+
+
+CIFAR100_MEAN = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
+CIFAR100_STD = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
 
 
 def build_loader(config):
@@ -149,6 +152,13 @@ def build_transform(is_train, config):
                                   interpolation=_pil_interp(config.DATA.INTERPOLATION))
             )
 
+    if 'imagenet' in config.DATA.DATASET:
+        mean = IMAGENET_DEFAULT_MEAN
+        std = IMAGENET_DEFAULT_STD
+    else:
+        mean = CIFAR100_MEAN
+        std = CIFAR100_STD
+
     t.append(transforms.ToTensor())
-    t.append(transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD))
+    t.append(transforms.Normalize(mean, std))
     return transforms.Compose(t)
