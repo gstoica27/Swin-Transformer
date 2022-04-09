@@ -28,7 +28,7 @@ def load_checkpoint(config, model, optimizer, lr_scheduler, logger, scaler):
     logger.info(msg)
     max_accuracy = 0.0
     # pdb.set_trace()
-    if not config.EVAL_MODE and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint and config.MODEL.SWIN.PRETRAINED_MODEL is None:
+    if not config.EVAL_MODE and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
         optimizer.load_state_dict(checkpoint['optimizer'])
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         config.defrost()
@@ -42,7 +42,33 @@ def load_checkpoint(config, model, optimizer, lr_scheduler, logger, scaler):
 
     del checkpoint
     torch.cuda.empty_cache()
-    return max_accuracy
+    return max_accuracy, msg
+
+def update_model_parameter_names(param_names):
+    updated_params = []
+    for param_name in param_names:
+        if 'module' not in param_name:
+            prefix = 'module.layers.'
+        else:
+            prefix = ''
+        updated_params.append(prefix + param_name)
+    return updated_params
+
+def load_finetunable_base(config, model, logger):
+    logger.info(f"==============> Resuming form {config.FINETUNING.BASE_MODEL}....................")
+    if config.FINETUNING.BASE_MODEL.startswith('https'):
+        checkpoint = torch.hub.load_state_dict_from_url(
+            config.FINETUNING.BASE_MODEL, map_location='cpu', check_hash=True)
+    else:
+        checkpoint = torch.load(config.FINETUNING.BASE_MODEL, map_location='cpu')
+
+    # checkpoint_params = update_model_parameters(checkpoint=checkpoint)
+    missing_tuple = model.load_state_dict(checkpoint['model'], strict=False)
+    logger.info(missing_tuple)
+
+    if 'max_accuracy' in checkpoint:
+            max_accuracy = checkpoint['max_accuracy']
+            logger.info('ACCURACY OF BASE MODEL: {:3f}'.format(max_accuracy))
 
 
 def load_pretrained(config, model, logger=None):

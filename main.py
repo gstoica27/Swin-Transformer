@@ -28,7 +28,8 @@ from data import build_loader
 from lr_scheduler import build_scheduler
 from optimizer import build_optimizer
 from logger import create_logger
-from utils import load_checkpoint, load_pretrained, save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor
+from utils import load_checkpoint, load_finetunable_base, load_pretrained, \
+save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor, update_model_parameter_names
 
 try:
     # noinspection PyUnresolvedReferences
@@ -88,7 +89,7 @@ def main(config):
     model.cuda()
     logger.info(str(model))
 
-    optimizer = build_optimizer(config, model)
+   
     # if config.AMP_OPT_LEVEL != "O0":
     #     model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)#, find_unused_parameters=True)
@@ -99,8 +100,6 @@ def main(config):
     if hasattr(model_without_ddp, 'flops'):
         flops = model_without_ddp.flops()
         logger.info(f"number of GFLOPs: {flops / 1e9}")
-
-    lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
 
     if config.AUG.MIXUP > 0.:
         # smoothing is handled with mixup label transform
@@ -113,6 +112,27 @@ def main(config):
     max_valid_accuracy = 0.0
     max_valid_top_five = 0.0
     scaler = torch.cuda.amp.GradScaler()
+    
+    whitelisted_param_names = None
+    if config.FINETUNING.APPLY_FINETUNING:
+
+        whitelisted_param_names = load_finetunable_base(config, model_without_ddp, logger)
+
+        if config.FINETUNING.FREEZE_BASE:
+            whitelisted_param_names = []
+            for layer_idx, layer in enumerate(model_without_ddp.layers):
+                if layer_idx in config.MODEL.SWIN.REVERSE_ATTENTION_LOCATIONS:
+                    whitelisted_param_names += [f'module.layers.{layer_idx}.' + i[0] for i in layer.named_parameters()]
+            whitelisted_param_names = set(whitelisted_param_names)
+
+        config.defrost()
+        config.TRAIN.AUTO_RESUME = False
+        config.MODEL.RESUME = False
+        config.MODEL.PRETRAINED = False
+        config.freeze()
+
+    optimizer = build_optimizer(config, model, whitelisted_params=whitelisted_param_names)
+    lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
 
     if config.TRAIN.AUTO_RESUME:
         resume_file = auto_resume_helper(config.OUTPUT)
@@ -123,15 +143,11 @@ def main(config):
             config.MODEL.RESUME = resume_file
             config.freeze()
             logger.info(f'auto resuming from {resume_file}')
-        elif config.MODEL.SWIN.PRETRAINED_MODEL is not None:
-            config.defrost()
-            config.MODEL.RESUME = config.MODEL.SWIN.PRETRAINED_MODEL
-            config.freeze()
         else:
             logger.info(f'no checkpoint found in {config.OUTPUT}, ignoring auto resume')
 
     if config.MODEL.RESUME:
-        max_valid_accuracy = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger, scaler)
+        max_valid_accuracy, missing_tuple = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger, scaler)
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         if config.EVAL_MODE:
