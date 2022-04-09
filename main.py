@@ -123,6 +123,10 @@ def main(config):
             config.MODEL.RESUME = resume_file
             config.freeze()
             logger.info(f'auto resuming from {resume_file}')
+        elif config.MODEL.SWIN.PRETRAINED_MODEL is not None:
+            config.defrost()
+            config.MODEL.RESUME = config.MODEL.SWIN.PRETRAINED_MODEL
+            config.freeze()
         else:
             logger.info(f'no checkpoint found in {config.OUTPUT}, ignoring auto resume')
 

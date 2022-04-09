@@ -8,7 +8,7 @@
 import os
 import torch
 import torch.distributed as dist
-
+import pdb
 try:
     # noinspection PyUnresolvedReferences
     # from apex import amp
@@ -27,7 +27,8 @@ def load_checkpoint(config, model, optimizer, lr_scheduler, logger, scaler):
     msg = model.load_state_dict(checkpoint['model'], strict=False)
     logger.info(msg)
     max_accuracy = 0.0
-    if not config.EVAL_MODE and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
+    # pdb.set_trace()
+    if not config.EVAL_MODE and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint and config.MODEL.SWIN.PRETRAINED_MODEL is None:
         optimizer.load_state_dict(checkpoint['optimizer'])
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         config.defrost()
