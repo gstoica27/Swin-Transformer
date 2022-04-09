@@ -120,7 +120,7 @@ _C.MODEL.CSAM.ADD_LAYER_NORM = False
 # -----------------------------------------------------------------------------
 _C.TRAIN = CN()
 _C.TRAIN.START_EPOCH = 0
-_C.TRAIN.EPOCHS = 330
+_C.TRAIN.EPOCHS = 600
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
 _C.TRAIN.BASE_LR = 5e-4 # TODO: Revert back to 5e-4
