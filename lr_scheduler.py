@@ -11,19 +11,31 @@ from timm.scheduler.step_lr import StepLRScheduler
 from timm.scheduler.scheduler import Scheduler
 
 
-def build_scheduler(config, optimizer, n_iter_per_epoch):
+def build_scheduler(config, optimizer, n_iter_per_epoch, tune_config=None):
+    warmup_epochs = config.TRAIN.WARMUP_EPOCHS
+    warmup_lr = config.TRAIN.WARMUP_LR
+    min_lr = config.TRAIN.MIN_LR
+    if tune_config is not None:
+        if 'warmup_epochs' in tune_config:
+            warmup_epochs = tune_config['warmup_epochs']
+        if 'warmup_lr' in tune_config:
+            warmup_lr = tune_config['warmup_lr']
+        if 'min_lr' in tune_config:
+            min_lr = tune_config['min_lr']
+
     num_steps = int(config.TRAIN.EPOCHS * n_iter_per_epoch)
-    warmup_steps = int(config.TRAIN.WARMUP_EPOCHS * n_iter_per_epoch)
+    warmup_steps = int(warmup_epochs * n_iter_per_epoch)
     decay_steps = int(config.TRAIN.LR_SCHEDULER.DECAY_EPOCHS * n_iter_per_epoch)
 
     lr_scheduler = None
+
     if config.TRAIN.LR_SCHEDULER.NAME == 'cosine':
         lr_scheduler = CosineLRScheduler(
             optimizer,
             t_initial=num_steps,
             t_mul=1.,
-            lr_min=config.TRAIN.MIN_LR,
-            warmup_lr_init=config.TRAIN.WARMUP_LR,
+            lr_min=min_lr,
+            warmup_lr_init=warmup_lr,
             warmup_t=warmup_steps,
             cycle_limit=1,
             t_in_epochs=False,
@@ -33,7 +45,7 @@ def build_scheduler(config, optimizer, n_iter_per_epoch):
             optimizer,
             t_initial=num_steps,
             lr_min_rate=0.01,
-            warmup_lr_init=config.TRAIN.WARMUP_LR,
+            warmup_lr_init=warmup_lr,
             warmup_t=warmup_steps,
             t_in_epochs=False,
         )
@@ -42,7 +54,7 @@ def build_scheduler(config, optimizer, n_iter_per_epoch):
             optimizer,
             decay_t=decay_steps,
             decay_rate=config.TRAIN.LR_SCHEDULER.DECAY_RATE,
-            warmup_lr_init=config.TRAIN.WARMUP_LR,
+            warmup_lr_init=warmup_lr,
             warmup_t=warmup_steps,
             t_in_epochs=False,
         )

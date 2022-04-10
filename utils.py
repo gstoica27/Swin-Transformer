@@ -9,12 +9,14 @@ import os
 import torch
 import torch.distributed as dist
 import pdb
+from ray import tune
 try:
     # noinspection PyUnresolvedReferences
     # from apex import amp
     import torch.cuda.amp as amp
 except ImportError:
     amp = None
+
 
 
 def load_checkpoint(config, model, optimizer, lr_scheduler, logger, scaler):
@@ -166,7 +168,7 @@ def load_pretrained(config, model, logger=None):
     torch.cuda.empty_cache()
 
 
-def save_checkpoint(config, epoch, model, max_accuracy, optimizer, lr_scheduler, logger, scaler):
+def save_checkpoint(config, epoch, model, max_accuracy, optimizer, lr_scheduler, logger, scaler, use_tune=False):
     save_state = {'model': model.state_dict(),
                   'optimizer': optimizer.state_dict(),
                   'lr_scheduler': lr_scheduler.state_dict(),
@@ -182,6 +184,13 @@ def save_checkpoint(config, epoch, model, max_accuracy, optimizer, lr_scheduler,
     logger.info(f"{save_path} saving......")
     torch.save(save_state, save_path)
     logger.info(f"{save_path} saved !!!")
+    if use_tune:
+        logger.info(f"Saving to tune...")
+        with tune.checkpoint_dir(epoch) as checkpoint_dir:
+            tune_save_path = os.path.join(checkpoint_dir, 'checkpoint')
+            torch.save((model.state_dict(), optimizer.state_dict()), tune_save_path)
+            logger.info(f"Saved to {tune_save_path}")
+            
 
 
 def get_grad_norm(parameters, norm_type=2):

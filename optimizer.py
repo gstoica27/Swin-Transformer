@@ -8,7 +8,7 @@
 from torch import optim as optim
 import pdb
 
-def build_optimizer(config, model, whitelisted_params=None):
+def build_optimizer(config, model, whitelisted_params=None, tune_config=None):
     """
     Build optimizer, set weight decay of normalization to 0 by default.
     """
@@ -23,12 +23,21 @@ def build_optimizer(config, model, whitelisted_params=None):
  
     opt_lower = config.TRAIN.OPTIMIZER.NAME.lower()
     optimizer = None
+
+    weight_decay = config.TRAIN.WEIGHT_DECAY
+    base_lr = config.TRAIN.BASE_LR
+    if tune_config is not None:
+        if 'weight_decay' in tune_config:
+            weight_decay = tune_config['weight_decay']
+        if 'base_lr' in tune_config:
+            base_lr = tune_config['base_lr']
+
     if opt_lower == 'sgd':
         optimizer = optim.SGD(parameters, momentum=config.TRAIN.OPTIMIZER.MOMENTUM, nesterov=True,
-                              lr=config.TRAIN.BASE_LR, weight_decay=config.TRAIN.WEIGHT_DECAY)
+                              lr=base_lr, weight_decay=weight_decay)
     elif opt_lower == 'adamw':
         optimizer = optim.AdamW(parameters, eps=config.TRAIN.OPTIMIZER.EPS, betas=config.TRAIN.OPTIMIZER.BETAS,
-                                lr=config.TRAIN.BASE_LR, weight_decay=config.TRAIN.WEIGHT_DECAY)
+                                lr=base_lr, weight_decay=weight_decay)
 
     return optimizer
 

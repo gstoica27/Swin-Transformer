@@ -101,6 +101,7 @@ class WindowAttention(nn.Module):
         self.reduce_reverse = mechanism_instructions.get('reduce_reverse', False)
         self.reverse_dim = head_dim if self.reduce_reverse else dim
         self.reverse_activation = self.reverse_activation_fn(mechanism_instructions.get('reverse_activation', 'none'))
+        self.hypernetwork_bias = mechanism_instructions.get('hypernetwork_bias', False)
 
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
@@ -151,7 +152,9 @@ class WindowAttention(nn.Module):
     def instantiate_generator_weights(self):
         if 'reverse' in self.mechanism:
             self.weight_generator = nn.Linear(self.reverse_dim, self.embed_dim * self.embed_dim, bias=False)
-            self.bias_generator = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
+            if self.hypernetwork_bias:
+                self.bias_generator = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
+
             if self.reduce_reverse:
                 self.reverse_reducer = nn.Linear(self.dim, self.dim)
     
@@ -246,17 +249,23 @@ class WindowAttention(nn.Module):
             v_r = self.reverse_activation(self.reverse_reducer(x))
             v_r = v_r.reshape(BW, K2, self.num_heads, self.embed_dim, 1).transpose(2, 1)
             weights = self.weight_generator(expert_mixture).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
-            biases = self.bias_generator(expert_mixture)
-            output = ((weights @ v_r).squeeze(-1) + biases).transpose(2,1).flatten(2)
+
+            output = (weights @ v_r).squeeze(-1)
+            if self.hypernetwork_bias:
+                biases = self.bias_generator(expert_mixture)
+                output = biases + output
+            output = output.transpose(2,1).flatten(2)
         else:
             # import pdb;pdb.set_trace()
             proj_weight = self.weight_generator(x).\
                 reshape(BW, K2, self.embed_dim, self.embed_dim)
-            proj_bias = self.bias_generator(expert_mixture).\
+            output = (expert_mixture.transpose(2, 1) @ proj_weight).reshape(BW, K2, C)
+
+            if self.hypernetwork_bias:
+                proj_bias = self.bias_generator(expert_mixture).\
                 transpose(2, 1).\
                     reshape(BW, K2, C)
-            output_projed = (expert_mixture.transpose(2, 1) @ proj_weight).reshape(BW, K2, C)
-            output = output_projed + proj_bias
+                output = output + proj_bias
         
         x = self.reverse_proj(output)
         x = self.reverse_proj_drop(x)

@@ -144,7 +144,8 @@ def build_model(config):
             mechanism_instructions={
                 'type': config.MODEL.SWIN.ALTERED_ATTENTION.TYPE,
                 'reduce_reverse': config.MODEL.SWIN.ALTERED_ATTENTION.REDUCE_REVERSE,
-                'reverse_activation': config.MODEL.SWIN.ALTERED_ATTENTION.REVERSE_ACTIVATION
+                'reverse_activation': config.MODEL.SWIN.ALTERED_ATTENTION.REVERSE_ACTIVATION,
+                'hypernetwork_bias': config.MODEL.SWIN.ALTERED_ATTENTION.HYPERNETWORK_BIAS,
             }
         )
     else:

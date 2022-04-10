@@ -6,6 +6,7 @@
 # --------------------------------------------------------'
 
 import os
+from numpy import True_
 import yaml
 from yacs.config import CfgNode as CN
 
@@ -81,6 +82,7 @@ _C.MODEL.SWIN.ALTERED_ATTENTION = CN()
 _C.MODEL.SWIN.ALTERED_ATTENTION.TYPE = 'forward'
 _C.MODEL.SWIN.ALTERED_ATTENTION.REDUCE_REVERSE = False
 _C.MODEL.SWIN.ALTERED_ATTENTION.REVERSE_ACTIVATION = 'none'
+_C.MODEL.SWIN.ALTERED_ATTENTION.HYPERNETWORK_BIAS = True
 
 # Finetuning instructions
 _C.FINETUNING = CN()
@@ -129,7 +131,7 @@ _C.TRAIN.START_EPOCH = 0
 _C.TRAIN.EPOCHS = 600
 _C.TRAIN.WARMUP_EPOCHS = 20
 _C.TRAIN.WEIGHT_DECAY = 0.05
-_C.TRAIN.BASE_LR = 5e-4 # TODO: Revert back to 5e-4
+_C.TRAIN.BASE_LR = 5e-4
 _C.TRAIN.WARMUP_LR = 5e-7
 _C.TRAIN.MIN_LR = 5e-6
 # Clip gradient norm
@@ -160,6 +162,14 @@ _C.TRAIN.OPTIMIZER.EPS = 1e-8
 _C.TRAIN.OPTIMIZER.BETAS = (0.9, 0.999)
 # SGD momentum
 _C.TRAIN.OPTIMIZER.MOMENTUM = 0.9
+
+_C.TUNE_PARAMETERS = CN()
+_C.TUNE_PARAMETERS.APPLY_TUNE = False
+_C.TUNE_PARAMETERS.WARMUP_EPOCHS = None
+_C.TUNE_PARAMETERS.WEIGHT_DECAY = None
+_C.TUNE_PARAMETERS.BASE_LR = None
+_C.TUNE_PARAMETERS.WARMUP_LR = None
+_C.TUNE_PARAMETERS.MIN_LR = None
 
 # -----------------------------------------------------------------------------
 # Augmentation settings

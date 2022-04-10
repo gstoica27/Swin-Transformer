@@ -22,6 +22,10 @@ import torch.distributed as dist
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import accuracy, AverageMeter
 
+from ray import tune
+from ray.tune import CLIReporter
+from ray.tune.schedulers import ASHAScheduler
+
 from config import get_config
 from models import build_model
 from data import build_loader
@@ -29,7 +33,8 @@ from lr_scheduler import build_scheduler
 from optimizer import build_optimizer
 from logger import create_logger
 from utils import load_checkpoint, load_finetunable_base, load_pretrained, \
-save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor, update_model_parameter_names
+save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor
+
 
 try:
     # noinspection PyUnresolvedReferences
@@ -169,7 +174,7 @@ def main(config):
 
         train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler, scaler=scaler)
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
-            save_checkpoint(config, epoch, model_without_ddp, max_valid_accuracy, optimizer, lr_scheduler, logger, scaler)
+            save_checkpoint(config, epoch, model_without_ddp, max_valid_accuracy, optimizer, lr_scheduler, logger, scaler, use_tune=False)
 
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} val images: Top1: {acc1:.2f}% | Top5: {acc5:.2f}")

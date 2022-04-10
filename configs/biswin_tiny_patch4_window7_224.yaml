@@ -1,0 +1,17 @@
+DATA:
+  DATASET: imagenet
+  DATA_PATH: /srv/datasets/ImageNet
+MODEL:
+  TYPE: biswin
+  NAME: biswin_tiny_patch4_window7_224
+  DROP_PATH_RATE: 0.2
+  SWIN:
+    EMBED_DIM: 96
+    DEPTHS: [ 2, 2, 6, 2 ]
+    NUM_HEADS: [ 3, 6, 12, 24 ]
+    WINDOW_SIZE: 7
+    REVERSE_ATTENTION_LOCATIONS: [0]
+    ALTERED_ATTENTION:
+      TYPE: 'reverse'
+      REDUCE_REVERSE: True
+      REVERSE_ACTIVATION: 'gelu'

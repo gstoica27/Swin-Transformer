@@ -15,7 +15,15 @@ MODEL:
       TYPE: 'reverse'
       REDUCE_REVERSE: True
       REVERSE_ACTIVATION: 'gelu'
+      HYPERNETWORK_BIAS: True
 FINETUNING:
-  APPLY_FINETUNING: True
+  APPLY_FINETUNING: False
   BASE_MODEL: /srv/share4/gstoica3/checkpoints/swin_transformer_cifar/swin_tiny_patch4_window7_224_cifar100/baseline_biswin_env/ckpt_epoch_310.pth
   FREEZE_BASE: True
+TUNE_PARAMETERS:
+  APPLY_TUNE: False
+  WARMUP_EPOCHS: [10, 20, 30]
+  WEIGHT_DECAY: [0.05, .1, .2]
+  BASE_LR: [5e-4, 3e-4, 1e-4]
+  WARMUP_LR: [5e-7, 5e-6]
+  MIN_LR: [5e-6]
