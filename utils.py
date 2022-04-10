@@ -10,6 +10,9 @@ import torch
 import torch.distributed as dist
 import pdb
 from ray import tune
+
+from ray.tune.integration.torch import (DistributedTrainableCreator,
+                                        distributed_checkpoint_dir)
 try:
     # noinspection PyUnresolvedReferences
     # from apex import amp
@@ -168,7 +171,7 @@ def load_pretrained(config, model, logger=None):
     torch.cuda.empty_cache()
 
 
-def save_checkpoint(config, epoch, model, max_accuracy, optimizer, lr_scheduler, logger, scaler, use_tune=False):
+def save_checkpoint(config, epoch, model, max_accuracy, optimizer, lr_scheduler, logger, scaler, use_tune=False, checkpoint_dir=N):
     save_state = {'model': model.state_dict(),
                   'optimizer': optimizer.state_dict(),
                   'lr_scheduler': lr_scheduler.state_dict(),
@@ -186,7 +189,7 @@ def save_checkpoint(config, epoch, model, max_accuracy, optimizer, lr_scheduler,
     logger.info(f"{save_path} saved !!!")
     if use_tune:
         logger.info(f"Saving to tune...")
-        with tune.checkpoint_dir(epoch) as checkpoint_dir:
+        with distributed_checkpoint_dir(epoch) as checkpoint_dir:
             tune_save_path = os.path.join(checkpoint_dir, 'checkpoint')
             torch.save((model.state_dict(), optimizer.state_dict()), tune_save_path)
             logger.info(f"Saved to {tune_save_path}")

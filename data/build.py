@@ -34,10 +34,8 @@ except:
     from timm.data.transforms import _pil_interp
 
 
-# CIFAR100_MEAN = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
-# CIFAR100_STD = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
-CIFAR100_MEAN = IMAGENET_DEFAULT_MEAN
-CIFAR100_STD = IMAGENET_DEFAULT_STD
+CIFAR100_MEAN = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
+CIFAR100_STD = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
 
 
 def build_loader(config):
@@ -93,6 +91,58 @@ def build_loader(config):
 
     return dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn
 
+def build_loader_tune(config):
+    config.defrost()
+    dataset_train, config.MODEL.NUM_CLASSES = build_dataset(is_train=True, config=config)
+    config.freeze()
+    print(f"successfully build train dataset")
+    dataset_val, _ = build_dataset(is_train=False, config=config)
+    print(f"successfully build val dataset")
+
+    num_tasks = 4 #dist.get_world_size()
+    global_rank = 0#dist.get_rank()
+    if config.DATA.ZIP_MODE and config.DATA.CACHE_MODE == 'part':
+        indices = np.arange(dist.get_rank(), len(dataset_train), dist.get_world_size())
+        sampler_train = SubsetRandomSampler(indices)
+    else:
+        sampler_train = torch.utils.data.DistributedSampler(
+            dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+        )
+
+    if config.TEST.SEQUENTIAL:
+        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+    else:
+        sampler_val = torch.utils.data.distributed.DistributedSampler(
+            dataset_val, shuffle=False
+        )
+
+    data_loader_train = torch.utils.data.DataLoader(
+        dataset_train, sampler=sampler_train,
+        batch_size=config.DATA.BATCH_SIZE,
+        num_workers=config.DATA.NUM_WORKERS,
+        pin_memory=config.DATA.PIN_MEMORY,
+        drop_last=True,
+    )
+
+    data_loader_val = torch.utils.data.DataLoader(
+        dataset_val, sampler=sampler_val,
+        batch_size=config.DATA.BATCH_SIZE,
+        shuffle=False,
+        num_workers=config.DATA.NUM_WORKERS,
+        pin_memory=config.DATA.PIN_MEMORY,
+        drop_last=False
+    )
+
+    # setup mixup / cutmix
+    mixup_fn = None
+    mixup_active = config.AUG.MIXUP > 0 or config.AUG.CUTMIX > 0. or config.AUG.CUTMIX_MINMAX is not None
+    if mixup_active:
+        mixup_fn = Mixup(
+            mixup_alpha=config.AUG.MIXUP, cutmix_alpha=config.AUG.CUTMIX, cutmix_minmax=config.AUG.CUTMIX_MINMAX,
+            prob=config.AUG.MIXUP_PROB, switch_prob=config.AUG.MIXUP_SWITCH_PROB, mode=config.AUG.MIXUP_MODE,
+            label_smoothing=config.MODEL.LABEL_SMOOTHING, num_classes=config.MODEL.NUM_CLASSES)
+
+    return dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn
 
 def build_dataset(is_train, config):
     transform = build_transform(is_train, config)
