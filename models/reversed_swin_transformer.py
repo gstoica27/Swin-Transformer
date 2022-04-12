@@ -102,6 +102,8 @@ class WindowAttention(nn.Module):
         self.reverse_dim = head_dim if self.reduce_reverse else dim
         self.reverse_activation = self.reverse_activation_fn(mechanism_instructions.get('reverse_activation', 'none'))
         self.hypernetwork_bias = mechanism_instructions.get('hypernetwork_bias', False)
+        self.mechanism_instructions = mechanism_instructions
+        
 
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
@@ -142,7 +144,8 @@ class WindowAttention(nn.Module):
         if self.mechanism == 'forward':
             self.forward_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
         elif self.mechanism == 'reverse':
-            self.reverse_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
+            if self.mechanism_instructions.get('project_values', True):
+                self.reverse_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
         elif self.mechanism in {'shared_forward_and_reverse', 'forward_and_reverse'}:
             self.forward_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
             self.reverse_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
@@ -155,8 +158,13 @@ class WindowAttention(nn.Module):
             if self.hypernetwork_bias:
                 self.bias_generator = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
 
-            if self.reduce_reverse:
-                self.reverse_reducer = nn.Linear(self.dim, self.dim)
+            if self.reduce_reverse and self.mechanism_instructions.get('project_input', True):
+                # pdb.set_trace()
+                if self.mechanism_instructions.get('value_is_input', False):
+
+                    self.reverse_reducer = self.reverse_v
+                else:
+                    self.reverse_reducer = nn.Linear(self.dim, self.dim)
     
     def instantiate_output_weights(self):
         if self.mechanism == 'forward':
@@ -171,10 +179,11 @@ class WindowAttention(nn.Module):
             self.forward_attn_drop = nn.Dropout(self.attn_drop)
             self.forward_proj = nn.Linear(self.dim, self.dim)
             self.forward_proj_drop = nn.Dropout(self.proj_drop)
-
-            self.reverse_attn_drop = nn.Dropout(self.attn_drop)
-            self.reverse_proj = nn.Linear(self.dim, self.dim)
-            self.reverse_proj_drop = nn.Dropout(self.proj_drop)
+            # TODO: Before, these were different weights. If the experiment with them different is better,
+            # revert back to it!!
+            self.reverse_attn_drop = self.forward_attn_drop
+            self.reverse_proj = self.forward_proj
+            self.reverse_proj_drop = self.forward_proj_drop
         else:
             raise ValueError(f'Unknown attention type: {self.mechanism}')
     
@@ -223,7 +232,11 @@ class WindowAttention(nn.Module):
         BW, K2, C = x.shape
         qk = self.reverse_qk(x).reshape(BW, K2, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k = qk[0], qk[1]  # make torchscript happy (cannot use tensor as tuple)
-        v = self.reverse_v(x).reshape(BW, K2, self.num_heads, C // self.num_heads).transpose(2, 1)
+        if self.mechanism_instructions.get('project_values', True):
+            v = self.reverse_v(x)
+        else:
+            v = x
+        v = v.reshape(BW, K2, self.num_heads, C // self.num_heads).transpose(2, 1)
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
 
@@ -239,14 +252,20 @@ class WindowAttention(nn.Module):
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
-        
-        attn = self.reverse_attn_drop(attn).transpose(-2, -1) # [BW, h, K2, K2]
+
+        attn = self.reverse_attn_drop(attn) # [BW, h, K2, K2]
+        if self.mechanism_instructions.get('transpose_softmax', True):
+            attn = attn.transpose(-2, -1)
 
         v = self.reverse_activation(v)
         expert_mixture = (attn @ v) # [BW, h, K2, C/h]
         # pdb.set_trace()
         if self.reduce_reverse:
-            v_r = self.reverse_activation(self.reverse_reducer(x))
+            if self.mechanism_instructions.get('project_input', True):
+                v_r = self.reverse_reducer(x)
+            else:
+                v_r = x
+            v_r = self.reverse_activation(v_r)
             v_r = v_r.reshape(BW, K2, self.num_heads, self.embed_dim, 1).transpose(2, 1)
             weights = self.weight_generator(expert_mixture).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
 
@@ -323,7 +342,7 @@ class WindowReverseAttention(nn.Module):
         head_dim = dim // num_heads
         self.embed_dim = dim // num_heads
         self.scale = qk_scale or head_dim ** -0.5
-
+        
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
@@ -878,11 +897,12 @@ class BiAttnSwinTransformer(nn.Module):
 
         # build layers
         self.layers = nn.ModuleList()
+        # pdb.set_trace()
         for i_layer in range(self.num_layers):
             if i_layer in reverse_attention_locations:
-                mechanism_instructions = mechanism_instructions
+                layer_mechanism_instructions = mechanism_instructions
             else:
-                mechanism_instructions = {'type': 'forward'}
+                layer_mechanism_instructions = {'type': 'forward'}
 
             layer = BasicLayer(
                 dim=int(embed_dim * 2 ** i_layer),
@@ -898,7 +918,7 @@ class BiAttnSwinTransformer(nn.Module):
                 norm_layer=norm_layer,
                 downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                 use_checkpoint=use_checkpoint,
-                mechanism_instructions=mechanism_instructions
+                mechanism_instructions=layer_mechanism_instructions
             )
             self.layers.append(layer)
 

@@ -127,7 +127,10 @@ def main(config):
             whitelisted_param_names = []
             for layer_idx, layer in enumerate(model_without_ddp.layers):
                 if layer_idx in config.MODEL.SWIN.REVERSE_ATTENTION_LOCATIONS:
-                    whitelisted_param_names += [f'module.layers.{layer_idx}.' + i[0] for i in layer.named_parameters()]
+                    for block_idx, block in enumerate(layer.blocks):
+                        whitelisted_param_names += [f'module.layers.{layer_idx}.blocks.{block_idx}.attn.' + i[0] for i in block.attn.named_parameters()]
+                    # pdb.set_trace()
+                    
             whitelisted_param_names = set(whitelisted_param_names)
 
         config.defrost()

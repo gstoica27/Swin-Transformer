@@ -59,7 +59,7 @@ def set_weight_decay(model, skip_list=(), skip_keywords=(), whitelisted_params=N
         else:
             has_decay.append(param)
         optimized_param_names.append(name)
-
+    # pdb.set_trace()
     return [{'params': has_decay},
             {'params': no_decay, 'weight_decay': 0.}]
 

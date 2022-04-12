@@ -146,6 +146,10 @@ def build_model(config):
                 'reduce_reverse': config.MODEL.SWIN.ALTERED_ATTENTION.REDUCE_REVERSE,
                 'reverse_activation': config.MODEL.SWIN.ALTERED_ATTENTION.REVERSE_ACTIVATION,
                 'hypernetwork_bias': config.MODEL.SWIN.ALTERED_ATTENTION.HYPERNETWORK_BIAS,
+                'project_values': config.MODEL.SWIN.ALTERED_ATTENTION.PROJECT_VALUES,
+                'project_input': config.MODEL.SWIN.ALTERED_ATTENTION.PROJECT_INPUT,
+                'value_is_input': config.MODEL.SWIN.ALTERED_ATTENTION.VALUE_IS_INPUT,
+                'transpose_softmax': config.MODEL.SWIN.ALTERED_ATTENTION.TRANSPOSE_SOFTMAX,
             }
         )
     else:
