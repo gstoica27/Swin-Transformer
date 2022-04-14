@@ -150,6 +150,9 @@ def build_model(config):
                 'project_input': config.MODEL.SWIN.ALTERED_ATTENTION.PROJECT_INPUT,
                 'value_is_input': config.MODEL.SWIN.ALTERED_ATTENTION.VALUE_IS_INPUT,
                 'transpose_softmax': config.MODEL.SWIN.ALTERED_ATTENTION.TRANSPOSE_SOFTMAX,
+                'activate_hyper_weights': config.MODEL.SWIN.ALTERED_ATTENTION.ACTIVATE_HYPER_WEIGHTS,
+                'gen_indiv_hyper_weights': config.MODEL.SWIN.ALTERED_ATTENTION.GEN_INDIV_HYPER_WEIGHTS,
+                'activate_input': config.MODEL.SWIN.ALTERED_ATTENTION.ACTIVATE_INPUT,
             }
         )
     else:

@@ -261,13 +261,23 @@ class WindowAttention(nn.Module):
         expert_mixture = (attn @ v) # [BW, h, K2, C/h]
         # pdb.set_trace()
         if self.reduce_reverse:
+            if self.mechanism_instructions.get('gen_indiv_hyper_weights', False):
+                # pdb.set_trace()
+                v_weights = self.weight_generator(v).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
+                if self.mechanism_instructions.get('activate_hyper_weights', False):
+                    v_weights = self.reverse_activation(v_weights)
+                weights = (attn @ v_weights.flatten(-2)).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
+            else:
+                weights = self.weight_generator(expert_mixture).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
+            
             if self.mechanism_instructions.get('project_input', True):
                 v_r = self.reverse_reducer(x)
             else:
                 v_r = x
-            v_r = self.reverse_activation(v_r)
+
+            if self.mechanism_instructions.get('activate_input', False):
+                v_r = self.reverse_activation(v_r)
             v_r = v_r.reshape(BW, K2, self.num_heads, self.embed_dim, 1).transpose(2, 1)
-            weights = self.weight_generator(expert_mixture).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
 
             output = (weights @ v_r).squeeze(-1)
             if self.hypernetwork_bias:
