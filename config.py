@@ -293,7 +293,11 @@ def update_config(config, args):
         config.THROUGHPUT_MODE = True
 
     # set local rank for distributed training
-    config.LOCAL_RANK = args.local_rank
+    if hasattr(args, "submitit_run"):
+        config.LOCAL_RANK = args.gpu 
+    else:
+        config.LOCAL_RANK = args.local_rank 
+
     if config.MODEL.TYPE == 'csam':
         config.TAG = name_model(config=config.MODEL.CSAM)
     # output folder

@@ -81,14 +81,10 @@ def parse_option():
     # distributed training
     parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
 
-    args, unparsed = parser.parse_known_args()
-
-    config = get_config(args)
-
-    return args, config
+    return parser
 
 
-def main(config):
+def main(config, logger):
     dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
 
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
@@ -147,14 +143,14 @@ def main(config):
 
     if config.MODEL.RESUME:
         max_valid_accuracy, missing_tuple = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger, scaler)
-        acc1, acc5, loss = validate(config, data_loader_val, model)
+        acc1, acc5, loss = validate(config, data_loader_val, model, logger)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         if config.EVAL_MODE:
             return
 
     if config.MODEL.PRETRAINED and (not config.MODEL.RESUME):
         load_pretrained(config, model_without_ddp, logger)
-        acc1, acc5, loss = validate(config, data_loader_val, model)
+        acc1, acc5, loss = validate(config, data_loader_val, model,logger)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
 
     if config.THROUGHPUT_MODE:
@@ -166,11 +162,11 @@ def main(config):
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         data_loader_train.sampler.set_epoch(epoch)
 
-        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler, scaler=scaler)
+        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler, scaler=scaler, logger =logger)
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_valid_accuracy, optimizer, lr_scheduler, logger, scaler, use_tune=False)
 
-        acc1, acc5, loss = validate(config, data_loader_val, model)
+        acc1, acc5, loss = validate(config, data_loader_val, model, logger)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} val images: Top1: {acc1:.2f}% | Top5: {acc5:.2f}")
         max_valid_accuracy = max(max_valid_accuracy, acc1)
         max_valid_top_five = max(max_valid_top_five, acc5)
@@ -191,7 +187,7 @@ def main(config):
     logger.info('Training time {}'.format(total_time_str))
 
 
-def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler, scaler):
+def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler, scaler, logger):
     model.train()
     optimizer.zero_grad()
 
@@ -338,7 +334,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
 
 
 @torch.no_grad()
-def validate(config, data_loader, model):
+def validate(config, data_loader, model, logger):
     criterion = torch.nn.CrossEntropyLoss()
     model.eval()
 
@@ -403,22 +399,35 @@ def throughput(data_loader, model, logger):
         logger.info(f"batch_size {batch_size} throughput {30 * batch_size / (tic2 - tic1)}")
         return
 
-
-if __name__ == '__main__':
-    _, config = parse_option()
+def run(args):
+    config = get_config(args)
 
     if config.AMP_OPT_LEVEL != "O0":
         assert amp is not None, "amp not installed!"
 
+    
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ['WORLD_SIZE'])
+        gpu = config.LOCAL_RANK
+        dist_url = 'env://'
         print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
+    elif 'SLURM_PROCID' in os.environ:
+        
+        # rank = int(os.environ['SLURM_PROCID'])
+        # gpu = args.rank % torch.cuda.device_count()
+        
+        rank = args.rank
+        gpu = args.gpu
+        world_size = args.world_size
+        dist_url = args.dist_url
     else:
         rank = -1
         world_size = -1
-    torch.cuda.set_device(config.LOCAL_RANK)
-    torch.distributed.init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=rank)
+
+    torch.cuda.set_device(gpu)
+
+    torch.distributed.init_process_group(backend='nccl', init_method=dist_url, world_size=world_size, rank=rank)
     torch.distributed.barrier()
 
     seed = config.SEED + dist.get_rank()
@@ -455,4 +464,10 @@ if __name__ == '__main__':
     # print config
     logger.info(config.dump())
 
-    main(config)
+    main(config, logger)
+
+
+if __name__ == '__main__':
+    parser = parse_option()
+    args, _ = parser.parse_known_args()
+    run(args)
