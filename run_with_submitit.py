@@ -11,7 +11,8 @@ import main as swin
 import submitit
 
 # Please change path before use - one time set up
-LOG_PATH = "/nethome/bdevnani3/raid/Swin-Transformer/logs"
+LOGS_PATH = "/nethome/bdevnani3/raid/Swin-Transformer/logs"
+
 
 def parse_args():
     parent_parser = swin.parse_option()
@@ -23,7 +24,7 @@ def parse_args():
         "--nodes", default=1, type=int, help="Number of nodes to request"
     )
     parser.add_argument(
-        "--cpus_per_gpu", default=4, type=int, help="Number cpus per gpu"
+        "--cpus_per_task", default=4, type=int, help="Number of nodes to request"
     )
     parser.add_argument("--timeout", default=60, type=int, help="Duration of the job")
     parser.add_argument(
@@ -38,7 +39,7 @@ def parse_args():
 
 
 def get_shared_folder() -> Path:
-    
+
     p = Path(LOGS_PATH)
     p.mkdir(exist_ok=True)
     return p
@@ -105,8 +106,8 @@ def main():
     executor.update_parameters(
         gpus_per_node=args.ngpus,
         tasks_per_node=args.ngpus,  # one task per GPU
-        cpus_per_gpu=args.cpus_per_gpu,
         nodes=args.nodes,
+        cpus_per_task=args.cpus_per_task,
         timeout_min=args.timeout,  # max is 60 * 72
         slurm_partition=args.slurm_partition,
     )
