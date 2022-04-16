@@ -28,7 +28,7 @@ FINETUNING:
   BASE_MODEL: /srv/share4/gstoica3/checkpoints/swin_transformer_cifar/swin_tiny_patch4_window7_224_cifar100/baseline_biswin_env/ckpt_epoch_310.pth
   FREEZE_BASE: True
   STOP_EPOCH: 150
-  ABS_DIFF: .1
+  DIFF_BOUND: .5
   TRAINABLES: head
 TUNE_PARAMETERS:
   APPLY_TUNE: False

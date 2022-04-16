@@ -94,10 +94,11 @@ def setup_finetuning_regime(config, model):
 def do_stop_finetuning(config, curr_accuracy, curr_epoch):
     # pdb.set_trace()
     are_finetuning = config.FINETUNING.APPLY_FINETUNING
-    abs_diff = config.FINETUNING.ABS_DIFF
+    diff_bound = config.FINETUNING.DIFF_BOUND
     stop_epoch = config.FINETUNING.STOP_EPOCH
     compare_accuracy = config.FINETUNING.COMP_ACCURACY
-    if are_finetuning and abs_diff is not None and abs(curr_accuracy - compare_accuracy) <= abs_diff:
+    # pdb.set_trace()
+    if are_finetuning and diff_bound is not None and curr_accuracy - compare_accuracy >= diff_bound:
         return True
     elif are_finetuning and stop_epoch is not None and curr_epoch >= stop_epoch:
         return True

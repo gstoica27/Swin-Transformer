@@ -118,6 +118,7 @@ def main(config):
 
     max_valid_accuracy = 0.0
     max_valid_top_five = 0.0
+    best_epoch = 0
     scaler = torch.cuda.amp.GradScaler()
     
     if config.FINETUNING.APPLY_FINETUNING:
@@ -172,9 +173,12 @@ def main(config):
 
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} val images: Top1: {acc1:.2f}% | Top5: {acc5:.2f}")
+        if acc1 >= max_valid_accuracy:
+            best_epoch = epoch
+            max_valid_top_five = acc5
         max_valid_accuracy = max(max_valid_accuracy, acc1)
-        max_valid_top_five = max(max_valid_top_five, acc5)
-        logger.info(f'Max valid accuracy | Top1: {max_valid_accuracy:.2f}% | Top5: {max_valid_top_five:.2f}')
+
+        logger.info(f'Max valid accuracy | Top1: {max_valid_accuracy:.2f}% | Top5: {max_valid_top_five:.2f} | At Epoch: {best_epoch}')
         # if data_loader_test is not None:
         #     test_acc1, test_acc5, test_loss = validate(config, data_loader_test, model)
         #     logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: Top1: {test_acc1:.2f}% | Top5: {test_acc5:.2f}")
