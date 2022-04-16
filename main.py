@@ -5,6 +5,7 @@
 # Written by Ze Liu
 # --------------------------------------------------------
 
+from multiprocessing.sharedctypes import Value
 import pdb
 import os
 from pickletools import optimize
@@ -14,6 +15,7 @@ import random
 import argparse
 import datetime
 import numpy as np
+from operator import methodcaller
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -33,7 +35,7 @@ from lr_scheduler import build_scheduler
 from optimizer import build_optimizer
 from logger import create_logger
 from utils import load_checkpoint, load_finetunable_base, load_pretrained, \
-save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor
+save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor, setup_finetuning_regime, do_stop_finetuning
 
 
 try:
@@ -97,7 +99,7 @@ def main(config):
    
     # if config.AMP_OPT_LEVEL != "O0":
     #     model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)#, find_unused_parameters=True)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False, find_unused_parameters=True)
     model_without_ddp = model.module
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -118,28 +120,17 @@ def main(config):
     max_valid_top_five = 0.0
     scaler = torch.cuda.amp.GradScaler()
     
-    whitelisted_param_names = None
     if config.FINETUNING.APPLY_FINETUNING:
-
-        whitelisted_param_names = load_finetunable_base(config, model_without_ddp, logger)
-
-        if config.FINETUNING.FREEZE_BASE:
-            whitelisted_param_names = []
-            for layer_idx, layer in enumerate(model_without_ddp.layers):
-                if layer_idx in config.MODEL.SWIN.REVERSE_ATTENTION_LOCATIONS:
-                    for block_idx, block in enumerate(layer.blocks):
-                        whitelisted_param_names += [f'module.layers.{layer_idx}.blocks.{block_idx}.attn.' + i[0] for i in block.attn.named_parameters()]
-                    # pdb.set_trace()
-                    
-            whitelisted_param_names = set(whitelisted_param_names)
-
         config.defrost()
+        baseline_accuracy = load_finetunable_base(config, model_without_ddp, logger)
+        setup_finetuning_regime(config, model_without_ddp)
+        config.FINETUNING.COMP_ACCURACY = baseline_accuracy
         config.TRAIN.AUTO_RESUME = False
         config.MODEL.RESUME = False
         config.MODEL.PRETRAINED = False
         config.freeze()
 
-    optimizer = build_optimizer(config, model, whitelisted_params=whitelisted_param_names)
+    optimizer = build_optimizer(config, model)
     lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
 
     if config.TRAIN.AUTO_RESUME:
@@ -191,6 +182,9 @@ def main(config):
         #     test_accuracy_at_best_valid = test_acc1 if update_test else test_accuracy_at_best_valid
         #     test_top5_at_best_valid = test_acc5 if update_test else test_top5_at_best_valid
         #     logger.info(f'Max test accuracy: Top1: {test_accuracy_at_best_valid:.2f}% | Top5: {test_top5_at_best_valid: .2f}')
+        if do_stop_finetuning(config, acc1, epoch):
+            print('Stopping FineTuning!...')
+            break
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -220,6 +214,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 outputs = model(samples, use_amp=True)
         else:
             outputs = model(samples, use_amp=False)
+            # pdb.set_trace()
 
         if config.TRAIN.ACCUMULATION_STEPS > 1:
             if config.AMP_OPT_LEVEL != 'O0':
@@ -235,6 +230,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
                         else:
                             grad_norm = get_grad_norm(model.parameters())
+                        # pdb.set_trace()
                         scaler.step(optimizer)
                         scaler.update()
                         optimizer.zero_grad()
@@ -258,6 +254,9 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                     continue
                 loss = loss / config.TRAIN.ACCUMULATION_STEPS
                 loss.backward()
+                # for name, param in model.named_parameters():
+                #     if param.grad is None:
+                #         print(name)
                 if config.TRAIN.CLIP_GRAD:
                     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
                 else:
@@ -333,6 +332,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 f'loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t'
                 f'grad_norm {norm_meter.val:.4f} ({norm_meter.avg:.4f})\t'
                 f'mem {memory_used:.0f}MB')
+        
     epoch_time = time.time() - start
     logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
 

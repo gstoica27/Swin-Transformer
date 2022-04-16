@@ -7,6 +7,7 @@
 
 import os
 import torch
+import torch.nn as nn
 import torch.distributed as dist
 import pdb
 from ray import tune
@@ -60,6 +61,48 @@ def update_model_parameter_names(param_names):
         updated_params.append(prefix + param_name)
     return updated_params
 
+def set_requires_grad(m, requires_grad):
+    # from https://discuss.pytorch.org/t/requires-grad-doesnt-propagate-to-the-parameters-of-the-module/9979/6
+    if hasattr(m, 'weight') and m.weight is not None:
+        m.weight.requires_grad_(requires_grad)
+    if hasattr(m, 'bias') and m.bias is not None:
+        m.bias.requires_grad_(requires_grad)
+    else:
+        m.requires_grad_(requires_grad)
+
+def setup_finetuning_regime(config, model):
+    if config.FINETUNING.FREEZE_BASE:
+        training_params = []
+        for name, param in model.named_parameters():
+            param.requires_grad = False
+        for layer_idx, layer in enumerate(model.layers):
+            if layer_idx in config.MODEL.SWIN.REVERSE_ATTENTION_LOCATIONS:
+                for block_idx, block in enumerate(layer.blocks):
+                    training_params += block.attn.attention_parameters + block.attn.reverse_parameters
+                    if config.FINETUNING.TRAINABLES == 'layer':
+                        training_params += block.attn.output_parameters
+                    if config.MODEL.SWIN.ALTERED_ATTENTION.TYPE == 'shared_forward_and_reverse':
+                            training_params += block.attn.forward_parameters
+        # pdb.set_trace()
+        for param in training_params:
+            set_requires_grad(param, True)
+        # pdb.set_trace()
+    else:
+        for name, param in model.named_parameters():
+            param.requires_grad = True
+    
+def do_stop_finetuning(config, curr_accuracy, curr_epoch):
+    # pdb.set_trace()
+    are_finetuning = config.FINETUNING.APPLY_FINETUNING
+    abs_diff = config.FINETUNING.ABS_DIFF
+    stop_epoch = config.FINETUNING.STOP_EPOCH
+    compare_accuracy = config.FINETUNING.COMP_ACCURACY
+    if are_finetuning and abs_diff is not None and abs(curr_accuracy - compare_accuracy) <= abs_diff:
+        return True
+    elif are_finetuning and stop_epoch is not None and curr_epoch >= stop_epoch:
+        return True
+    return False
+
 def load_finetunable_base(config, model, logger):
     logger.info(f"==============> Resuming form {config.FINETUNING.BASE_MODEL}....................")
     if config.FINETUNING.BASE_MODEL.startswith('https'):
@@ -75,6 +118,7 @@ def load_finetunable_base(config, model, logger):
     if 'max_accuracy' in checkpoint:
             max_accuracy = checkpoint['max_accuracy']
             logger.info('ACCURACY OF BASE MODEL: {:3f}'.format(max_accuracy))
+    return max_accuracy
 
 
 def load_pretrained(config, model, logger=None):

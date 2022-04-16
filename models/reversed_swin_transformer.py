@@ -103,11 +103,16 @@ class WindowAttention(nn.Module):
         self.reverse_activation = self.reverse_activation_fn(mechanism_instructions.get('reverse_activation', 'none'))
         self.hypernetwork_bias = mechanism_instructions.get('hypernetwork_bias', False)
         self.mechanism_instructions = mechanism_instructions
-        
+
+        self.reverse_parameters = []
+        self.forward_parameters = []
+        self.attention_parameters = []
+        self.output_parameters = []
 
         # define a parameter table of relative position bias
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+        self.attention_parameters.append(self.relative_position_bias_table)
 
         # get pair-wise relative position index for each token inside the window
         coords_h = torch.arange(self.window_size[0])
@@ -126,38 +131,50 @@ class WindowAttention(nn.Module):
         self.instantiate_proj_weights()
         self.instantiate_generator_weights()
         self.instantiate_output_weights()
+        # self.concretify_parameters_sets()
 
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
     
     def instantiate_scoring_weights(self):
-        if self.mechanism in {'forward', 'reverse', 'shared_forward_and_reverse'}:
-            self.forward_qk = nn.Linear(self.dim, self.dim * 2, bias=self.qkv_bias)
-            self.reverse_qk = self.forward_qk
-        elif self.mechanism in {'forward_and_reverse'}:
-            self.forward_qk = nn.Linear(self.dim, self.dim * 2, bias=self.qkv_bias)
-            self.reverse_qk = nn.Linear(self.dim, self.dim * 2, bias=self.qkv_bias)
+        self.qk = nn.Linear(self.dim, self.dim * 2, bias=self.qkv_bias)
+        if self.mechanism == 'forward':
+            self.forward_qk = self.qk
+            # self.forward_parameters.append(self.forward_qk)
+        elif self.mechanism == 'reverse':
+            self.reverse_qk = self.qk
+            # self.reverse_parameters.append(self.reverse_qk)
+        elif self.mechanism == 'shared_forward_and_reverse':
+            self.forward_qk = self.reverse_qk = self.qk
+            # self.reverse_parameters.append(self.reverse_qk)
+            # self.forward_parameters.append(self.forward_qk)
         else:
             raise ValueError(f'Unknown attention type: {self.mechanism}')
+        self.attention_parameters.append(self.qk)
     
     def instantiate_proj_weights(self):
         if self.mechanism == 'forward':
             self.forward_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
+            self.forward_parameters.append(self.forward_v)
         elif self.mechanism == 'reverse':
             if self.mechanism_instructions.get('project_values', True):
                 self.reverse_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
-        elif self.mechanism in {'shared_forward_and_reverse', 'forward_and_reverse'}:
+                self.reverse_parameters.append(self.reverse_v)
+        elif self.mechanism == 'shared_forward_and_reverse':
             self.forward_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
             self.reverse_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
+            self.forward_parameters.append(self.forward_v)
+            self.reverse_parameters.append(self.reverse_v)
         else:
             raise ValueError(f'Unknown attention type: {self.mechanism}')
         
     def instantiate_generator_weights(self):
         if 'reverse' in self.mechanism:
             self.weight_generator = nn.Linear(self.reverse_dim, self.embed_dim * self.embed_dim, bias=False)
+            self.reverse_parameters.append(self.weight_generator)
             if self.hypernetwork_bias:
                 self.bias_generator = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
-
+                self.reverse_parameters.append(self.bias_generator)
             if self.reduce_reverse and self.mechanism_instructions.get('project_input', True):
                 # pdb.set_trace()
                 if self.mechanism_instructions.get('value_is_input', False):
@@ -165,28 +182,32 @@ class WindowAttention(nn.Module):
                     self.reverse_reducer = self.reverse_v
                 else:
                     self.reverse_reducer = nn.Linear(self.dim, self.dim)
+                self.reverse_parameters.append(self.reverse_reducer)
     
     def instantiate_output_weights(self):
+        self.attn_drop = nn.Dropout(self.attn_drop)
+        self.output_proj = nn.Linear(self.dim, self.dim)
+        self.output_drop = nn.Dropout(self.proj_drop)
         if self.mechanism == 'forward':
-            self.forward_attn_drop = nn.Dropout(self.attn_drop)
-            self.forward_proj = nn.Linear(self.dim, self.dim)
-            self.forward_proj_drop = nn.Dropout(self.proj_drop)
+            self.forward_attn_drop = self.attn_drop
+            self.forward_proj = self.output_proj
+            self.forward_proj_drop = self.output_drop
         elif self.mechanism == 'reverse':
-            self.reverse_attn_drop = nn.Dropout(self.attn_drop)
-            self.reverse_proj = nn.Linear(self.dim, self.dim)
-            self.reverse_proj_drop = nn.Dropout(self.proj_drop)
-        elif self.mechanism in {'forward_and_reverse', 'shared_forward_and_reverse'}:
-            self.forward_attn_drop = nn.Dropout(self.attn_drop)
-            self.forward_proj = nn.Linear(self.dim, self.dim)
-            self.forward_proj_drop = nn.Dropout(self.proj_drop)
-            # TODO: Before, these were different weights. If the experiment with them different is better,
-            # revert back to it!!
-            self.reverse_attn_drop = self.forward_attn_drop
-            self.reverse_proj = self.forward_proj
-            self.reverse_proj_drop = self.forward_proj_drop
-        else:
-            raise ValueError(f'Unknown attention type: {self.mechanism}')
+            self.reverse_attn_drop = self.attn_drop
+            self.reverse_proj = self.output_proj
+            self.reverse_proj_drop = self.output_drop
+        elif self.mechanism == 'shared_forward_and_reverse':
+            self.forward_attn_drop = self.reverse_attn_drop = self.attn_drop
+            self.forward_proj = self.reverse_proj = self.output_proj
+            self.reverse_proj_drop = self.forward_proj_drop = self.output_drop
+        self.output_parameters += [self.attn_drop, self.output_proj, self.output_drop]
     
+    # def concretify_parameters_sets(self):
+        # pdb.set_trace()
+        # self.attention_parameters = nn.ModuleList(self.attention_parameters)
+        # self.reverse_parameters = nn.ModuleList(self.reverse_parameters)
+        # self.forward_parameters = nn.ModuleList(self.forward_parameters)
+
     def reverse_activation_fn(self, reverse_activation):
         if reverse_activation == 'none':
             return lambda x: x
@@ -199,61 +220,20 @@ class WindowAttention(nn.Module):
         elif reverse_activation == 'tanh':
             return nn.Tanh()
 
-    def apply_forward_attention(self, x, mask=None):
-        B_, N, C = x.shape
-        qk = self.forward_qk(x).reshape(B_, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k = qk[0], qk[1]  # make torchscript happy (cannot use tensor as tuple)
-        v = self.forward_v(x).reshape(B_, N, self.num_heads, C // self.num_heads).transpose(2, 1)
-
-        q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
-
-        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-            self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
-        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-        attn = attn + relative_position_bias.unsqueeze(0)
-
-        if mask is not None:
-            nW = mask.shape[0]
-            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
-            attn = attn.view(-1, self.num_heads, N, N)
-            attn = self.softmax(attn)
-        else:
-            attn = self.softmax(attn)
-
-        attn = self.forward_attn_drop(attn)
-
-        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
-        x = self.forward_proj(x)
-        x = self.forward_proj_drop(x)
+    def apply_forward_attention(self, x, attn):
+        BW, K2, C = x.shape
+        v = self.forward_v(x).reshape(BW, K2, self.num_heads, C // self.num_heads).transpose(2, 1)
+        x = (attn @ v).transpose(1, 2).reshape(BW, K2, C)
         return x
 
-    def apply_reverse_attention(self, x, mask=None):
+    def apply_reverse_attention(self, x, attn):
         BW, K2, C = x.shape
-        qk = self.reverse_qk(x).reshape(BW, K2, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k = qk[0], qk[1]  # make torchscript happy (cannot use tensor as tuple)
         if self.mechanism_instructions.get('project_values', True):
             v = self.reverse_v(x)
         else:
             v = x
         v = v.reshape(BW, K2, self.num_heads, C // self.num_heads).transpose(2, 1)
-        q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
-
-        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-            self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
-        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-        attn = attn + relative_position_bias.unsqueeze(0)
-
-        if mask is not None:
-            nW = mask.shape[0]
-            attn = attn.view(BW // nW, nW, self.num_heads, K2, K2) + mask.unsqueeze(1).unsqueeze(0)
-            attn = attn.view(-1, self.num_heads, K2, K2)
-            attn = self.softmax(attn)
-        else:
-            attn = self.softmax(attn)
-
-        attn = self.reverse_attn_drop(attn) # [BW, h, K2, K2]
+        
         if self.mechanism_instructions.get('transpose_softmax', True):
             attn = attn.transpose(-2, -1)
 
@@ -275,7 +255,7 @@ class WindowAttention(nn.Module):
             else:
                 v_r = x
 
-            if self.mechanism_instructions.get('activate_input', False):
+            if self.mechanism_instructions.get('activate_input', True):
                 v_r = self.reverse_activation(v_r)
             v_r = v_r.reshape(BW, K2, self.num_heads, self.embed_dim, 1).transpose(2, 1)
 
@@ -296,19 +276,44 @@ class WindowAttention(nn.Module):
                     reshape(BW, K2, C)
                 output = output + proj_bias
         
-        x = self.reverse_proj(output)
-        x = self.reverse_proj_drop(x)
-        return x
+        return output
 
     def forward(self, x, mask=None):
+        # pdb.set_trace()
+        BW, K2, C = x.shape
+        qk = self.qk(x).reshape(BW, K2, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k = qk[0], qk[1]  # make torchscript happy (cannot use tensor as tuple)
+        q = q * self.scale
+        attn = (q @ k.transpose(-2, -1))
+
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+            self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+        attn = attn + relative_position_bias.unsqueeze(0)
+
+        if mask is not None:
+            nW = mask.shape[0]
+            attn = attn.view(BW // nW, nW, self.num_heads, K2, K2) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(-1, self.num_heads, K2, K2)
+            attn = self.softmax(attn)
+        else:
+            attn = self.softmax(attn)
+
+        attn = self.attn_drop(attn) # [BW, h, K2, K2]
+
         if self.mechanism == 'forward':
-            return self.apply_forward_attention(x, mask=mask)
+            output = self.apply_forward_attention(x, attn)
         elif self.mechanism == 'reverse':
-            return self.apply_reverse_attention(x, mask=mask)
+            output = self.apply_reverse_attention(x, attn)
         elif self.mechanism in {'forward_and_reverse', 'shared_forward_and_reverse'}:
-            forward_attn = self.apply_forward_attention(x, mask=mask)
-            reverse_attn = self.apply_reverse_attention(x, mask=mask)
-            return forward_attn + reverse_attn
+            # pdb.set_trace()
+            forward_attn = self.apply_forward_attention(x, attn)
+            reverse_attn = self.apply_reverse_attention(x, attn)
+            output = forward_attn + reverse_attn
+        
+        x = self.output_proj(output)
+        x = self.output_drop(x)
+        return x
     
     def extra_repr(self) -> str:
         return f'dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}'
