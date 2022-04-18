@@ -6,6 +6,13 @@
 # --------------------------------------------------------
 
 import os
+import ffcv
+from ffcv.fields import IntField, RGBImageField
+from ffcv.fields.decoders import IntDecoder, RandomResizedCropRGBImageDecoder
+from ffcv.loader import Loader, OrderOption
+from ffcv.transforms import RandomHorizontalFlip, Cutout, NormalizeImage, \
+    RandomTranslate, Convert, ToDevice, ToTensor, ToTorchImage, RandAugment
+from ffcv.transforms.common import Squeeze
 import torch
 import numpy as np
 import torch.distributed as dist
@@ -41,46 +48,50 @@ CIFAR100_STD = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
 
 
 def build_loader(config):
-    config.defrost()
-    dataset_train, config.MODEL.NUM_CLASSES = build_dataset(is_train=True, config=config)
-    config.freeze()
-    print(f"local rank {config.LOCAL_RANK} / global rank {dist.get_rank()} successfully build train dataset")
-    dataset_val, _ = build_dataset(is_train=False, config=config)
-    print(f"local rank {config.LOCAL_RANK} / global rank {dist.get_rank()} successfully build val dataset")
-
-    num_tasks = dist.get_world_size()
-    global_rank = dist.get_rank()
-    if config.DATA.ZIP_MODE and config.DATA.CACHE_MODE == 'part':
-        indices = np.arange(dist.get_rank(), len(dataset_train), dist.get_world_size())
-        sampler_train = SubsetRandomSampler(indices)
+    if config.FFCV:
+        ffcv_data_loader_train, after_ffcv_transform = build_ffcv_dataloader(True, config)
+        ffcv_data_loader_val, _ = build_ffcv_dataloader(False, config)
     else:
-        sampler_train = torch.utils.data.DistributedSampler(
-            dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+        config.defrost()
+        dataset_train, config.MODEL.NUM_CLASSES = build_dataset(is_train=True, config=config)
+        config.freeze()
+        print(f"local rank {config.LOCAL_RANK} / global rank {dist.get_rank()} successfully build train dataset")
+        dataset_val, _ = build_dataset(is_train=False, config=config)
+        print(f"local rank {config.LOCAL_RANK} / global rank {dist.get_rank()} successfully build val dataset")
+
+        num_tasks = dist.get_world_size()
+        global_rank = dist.get_rank()
+        if config.DATA.ZIP_MODE and config.DATA.CACHE_MODE == 'part':
+            indices = np.arange(dist.get_rank(), len(dataset_train), dist.get_world_size())
+            sampler_train = SubsetRandomSampler(indices)
+        else:
+            sampler_train = torch.utils.data.DistributedSampler(
+                dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+            )
+
+        if config.TEST.SEQUENTIAL:
+            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+        else:
+            sampler_val = torch.utils.data.distributed.DistributedSampler(
+                dataset_val, shuffle=False
+            )
+
+        data_loader_train = torch.utils.data.DataLoader(
+            dataset_train, sampler=sampler_train,
+            batch_size=config.DATA.BATCH_SIZE,
+            num_workers=config.DATA.NUM_WORKERS,
+            pin_memory=config.DATA.PIN_MEMORY,
+            drop_last=True,
         )
 
-    if config.TEST.SEQUENTIAL:
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-    else:
-        sampler_val = torch.utils.data.distributed.DistributedSampler(
-            dataset_val, shuffle=False
+        data_loader_val = torch.utils.data.DataLoader(
+            dataset_val, sampler=sampler_val,
+            batch_size=config.DATA.BATCH_SIZE,
+            shuffle=False,
+            num_workers=config.DATA.NUM_WORKERS,
+            pin_memory=config.DATA.PIN_MEMORY,
+            drop_last=False
         )
-
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train, sampler=sampler_train,
-        batch_size=config.DATA.BATCH_SIZE,
-        num_workers=config.DATA.NUM_WORKERS,
-        pin_memory=config.DATA.PIN_MEMORY,
-        drop_last=True,
-    )
-
-    data_loader_val = torch.utils.data.DataLoader(
-        dataset_val, sampler=sampler_val,
-        batch_size=config.DATA.BATCH_SIZE,
-        shuffle=False,
-        num_workers=config.DATA.NUM_WORKERS,
-        pin_memory=config.DATA.PIN_MEMORY,
-        drop_last=False
-    )
 
     # setup mixup / cutmix
     mixup_fn = None
@@ -91,7 +102,80 @@ def build_loader(config):
             prob=config.AUG.MIXUP_PROB, switch_prob=config.AUG.MIXUP_SWITCH_PROB, mode=config.AUG.MIXUP_MODE,
             label_smoothing=config.MODEL.LABEL_SMOOTHING, num_classes=config.MODEL.NUM_CLASSES)
 
-    return dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn
+    if config.FFCV:
+        return None, None, ffcv_data_loader_train, ffcv_data_loader_val, mixup_fn, after_ffcv_transform
+    else:
+        return dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn, None
+
+def build_ffcv_dataloader(is_train, config):
+    device = torch.device(f'cuda:{config.LOCAL_RANK}')
+    label_pipeline = [IntDecoder(), ToTensor(), Squeeze(), ToDevice(device, non_blocking=True)]
+    image_pipeline = [RandomResizedCropRGBImageDecoder((224, 224))]
+
+    is_imagenet = 'imagenet' in config.DATA.DATASET
+
+    IMAGENET_MEAN = np.array([0.485, 0.456, 0.406]) * 255
+    IMAGENET_STD = np.array([0.229, 0.224, 0.225]) * 255
+    CIFAR100_MEAN = np.array([0.5070751592371323, 0.48654887331495095, 0.4409178433670343])
+    CIFAR100_STD = np.array([0.2673342858792401, 0.2564384629170883, 0.27615047132568404])
+    mean = IMAGENET_MEAN if is_imagenet else CIFAR100_MEAN
+    std = IMAGENET_STD if is_imagenet else CIFAR100_STD
+
+    # Add image transforms and normalization
+    if is_train:
+        image_pipeline.extend([
+            RandomHorizontalFlip(flip_prob=0.5),
+            RandAugment()
+        ])
+    image_pipeline.extend([
+        ToTensor(),
+        ToTorchImage(),
+        ToDevice(device, non_blocking=True),
+        NormalizeImage(mean, std, np.float32),
+    ])
+
+    if is_train:
+        # hacky way to use a mixture of timm and ffcv transformations
+        timm_transform = create_transform(
+            input_size=config.DATA.IMG_SIZE,
+            is_training=True,
+            color_jitter=config.AUG.COLOR_JITTER if config.AUG.COLOR_JITTER > 0 else None,
+            auto_augment=config.AUG.AUTO_AUGMENT if config.AUG.AUTO_AUGMENT != 'none' else None,
+            re_prob=config.AUG.REPROB,
+            re_mode=config.AUG.REMODE,
+            re_count=config.AUG.RECOUNT,
+            interpolation=config.DATA.INTERPOLATION,
+        )
+        #rand_augment = timm_transform.transforms[2]
+        rand_erasing = timm_transform.transforms[5]
+
+        after_ffcv_transform = transforms.Compose([
+            rand_erasing
+        ])
+    else:
+        after_ffcv_transform = None
+
+    prefix = 'train' if is_train else 'val'
+    if is_imagenet:
+        ffcv_dir = '/srv/share4/thearn6/datasets/ffcv_imagenet'
+        ffcv_path = os.path.join(ffcv_dir, f'{prefix}_224_0.5_90.ffcv')
+    else:
+        ffcv_dir = '/srv/share4/thearn6/datasets/ffcv_cifar100'
+        ffcv_path = os.path.join(ffcv_dir, f'{prefix}_224_0_raw.ffcv')
+
+    is_distributed = True
+    return Loader(ffcv_path,
+        batch_size=config.DATA.BATCH_SIZE,    
+        num_workers=config.DATA.NUM_WORKERS,
+        order=ffcv.loader.OrderOption.RANDOM if is_distributed else ffcv.loader.OrderOption.QUASI_RANDOM,
+        os_cache=is_distributed or not is_imagenet,
+        drop_last=is_train,
+        pipelines= {
+            'image': image_pipeline,
+            'label': label_pipeline
+        },
+        distributed=is_distributed
+    ), after_ffcv_transform
 
 def build_loader_tune(config):
     config.defrost()

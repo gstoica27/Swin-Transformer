@@ -273,6 +273,8 @@ def update_config(config, args):
         config.DATA.ZIP_MODE = True
     if args.cache_mode:
         config.DATA.CACHE_MODE = args.cache_mode
+    if args.num_workers:
+        config.DATA.NUM_WORKERS = args.num_workers
     if args.pretrained:
         config.MODEL.PRETRAINED = args.pretrained
     if args.resume:
@@ -291,6 +293,9 @@ def update_config(config, args):
         config.EVAL_MODE = True
     if args.throughput:
         config.THROUGHPUT_MODE = True
+
+    config.NATIVE_AMP = args.native_amp
+    config.FFCV = args.ffcv
 
     # set local rank for distributed training
     if hasattr(args, "submitit_run"):

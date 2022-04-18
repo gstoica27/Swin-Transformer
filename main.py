@@ -20,6 +20,7 @@ from operator import methodcaller
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
+from torch.cuda.amp import GradScaler, autocast
 
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import accuracy, AverageMeter
@@ -36,7 +37,6 @@ from optimizer import build_optimizer
 from logger import create_logger
 from utils import load_checkpoint, load_finetunable_base, load_pretrained, \
 save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor, setup_finetuning_regime, do_stop_finetuning
-
 
 try:
     # noinspection PyUnresolvedReferences
@@ -64,6 +64,7 @@ def parse_option():
                         help='no: no cache, '
                              'full: cache all data, '
                              'part: sharding the dataset into nonoverlapping pieces and only cache one piece')
+    parser.add_argument('--num-workers', type=int, help="Number of data loading threads")
     parser.add_argument('--pretrained',
                         help='pretrained weight from checkpoint, could be imagenet22k pretrained weight')
     parser.add_argument('--resume', help='resume from checkpoint')
@@ -72,6 +73,9 @@ def parse_option():
                         help="whether to use gradient checkpointing to save memory")
     parser.add_argument('--amp-opt-level', type=str, default='O1', choices=['O0', 'O1', 'O2'],
                         help='mixed precision opt level, if O0, no amp is used')
+    parser.add_argument('--native-amp', action='store_true', default=False,
+                        help='Use Native Torch AMP mixed precision')
+    parser.add_argument('--ffcv', action='store_true', default=False)
     parser.add_argument('--output', default='output', type=str, metavar='PATH',
                         help='root of output folder, the full path is <output>/<model_name>/<tag> (default: output)')
     parser.add_argument('--tag', help='tag of experiment')
@@ -85,7 +89,10 @@ def parse_option():
 
 
 def main(config, logger):
-    dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
+    dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn, after_ffcv_transform = build_loader(config)
+
+    if config.FFCV:
+        print("Using ffcv")
 
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
     model = build_model(config)
@@ -115,7 +122,7 @@ def main(config, logger):
     max_valid_accuracy = 0.0
     max_valid_top_five = 0.0
     best_epoch = 0
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = GradScaler(enabled=config.NATIVE_AMP)
     
     if config.FINETUNING.APPLY_FINETUNING:
         config.defrost()
@@ -145,14 +152,14 @@ def main(config, logger):
     if config.MODEL.RESUME:
         max_valid_accuracy, missing_tuple = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger, scaler)
         acc1, acc5, loss = validate(config, data_loader_val, model, logger)
-        logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
+        logger.info(f"Accuracy of the network on the {len(data_loader_val) * args.batch_size} test images: {acc1:.1f}%")
         if config.EVAL_MODE:
             return
 
     if config.MODEL.PRETRAINED and (not config.MODEL.RESUME):
         load_pretrained(config, model_without_ddp, logger)
-        acc1, acc5, loss = validate(config, data_loader_val, model,logger)
-        logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
+        acc1, acc5, loss = validate(config, data_loader_val, model, logger)
+        logger.info(f"Accuracy of the network on the {len(data_loader_val) * args.batch_size} test images: {acc1:.1f}%")
 
     if config.THROUGHPUT_MODE:
         throughput(data_loader_val, model, logger)
@@ -161,23 +168,21 @@ def main(config, logger):
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
-        data_loader_train.sampler.set_epoch(epoch)
+        if not config.FFCV:
+            data_loader_train.sampler.set_epoch(epoch)
 
-        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler, scaler=scaler, logger =logger)
+        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, after_ffcv_transform, lr_scheduler, scaler=scaler, logger=logger)
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_valid_accuracy, optimizer, lr_scheduler, logger, scaler, use_tune=False)
 
         acc1, acc5, loss = validate(config, data_loader_val, model, logger)
-        logger.info(f"Accuracy of the network on the {len(dataset_val)} val images: Top1: {acc1:.2f}% | Top5: {acc5:.2f}")
-        if acc1 >= max_valid_accuracy:
-            best_epoch = epoch
-            max_valid_top_five = acc5
+        logger.info(f"Accuracy of the network on the {len(data_loader_val) * args.batch_size} val images: Top1: {acc1:.2f}% | Top5: {acc5:.2f}")
         max_valid_accuracy = max(max_valid_accuracy, acc1)
 
         logger.info(f'Max valid accuracy | Top1: {max_valid_accuracy:.2f}% | Top5: {max_valid_top_five:.2f} | At Epoch: {best_epoch}')
         # if data_loader_test is not None:
         #     test_acc1, test_acc5, test_loss = validate(config, data_loader_test, model)
-        #     logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: Top1: {test_acc1:.2f}% | Top5: {test_acc5:.2f}")
+        #     logger.info(f"Accuracy of the network on the {len(dataset_val) * args.batch_size} test images: Top1: {test_acc1:.2f}% | Top5: {test_acc5:.2f}")
         #     update_test = max_valid_accuracy == acc1
         #     test_accuracy_at_best_valid = test_acc1 if update_test else test_accuracy_at_best_valid
         #     test_top5_at_best_valid = test_acc5 if update_test else test_top5_at_best_valid
@@ -191,7 +196,7 @@ def main(config, logger):
     logger.info('Training time {}'.format(total_time_str))
 
 
-def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler, scaler, logger):
+def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, after_ffcv_transform, lr_scheduler, scaler, logger):
     model.train()
     optimizer.zero_grad()
 
@@ -203,122 +208,73 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
     start = time.time()
     end = time.time()
     for idx, (samples, targets) in enumerate(data_loader):
-        samples = samples.cuda(non_blocking=True)
-        targets = targets.cuda(non_blocking=True)
+        if after_ffcv_transform is not None:
+            samples = after_ffcv_transform(samples)
+
+        if not config.FFCV:
+            samples = samples.cuda(non_blocking=True)
+            targets = targets.cuda(non_blocking=True)
 
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
-
-        if config.AMP_OPT_LEVEL != 'O0':
-            with amp.autocast():
-                outputs = model(samples, use_amp=True)
         else:
+            targets = torch.nn.functional.one_hot(targets, num_classes=config.MODEL.NUM_CLASSES)
+
+        with autocast(enabled=config.NATIVE_AMP):
             outputs = model(samples, use_amp=False)
-            # pdb.set_trace()
+            loss = criterion(outputs, targets)
 
         if config.TRAIN.ACCUMULATION_STEPS > 1:
-            if config.AMP_OPT_LEVEL != 'O0':
-                with amp.autocast():
-                    loss = criterion(outputs, targets)
-                    loss = loss / config.TRAIN.ACCUMULATION_STEPS
-                # with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaler.scale(loss).backward()
-                    # scaled_loss.backward()
-                    if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
-                        if config.TRAIN.CLIP_GRAD:
-                            scaler.unscale_(optimizer)
-                            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
-                        else:
-                            grad_norm = get_grad_norm(model.parameters())
-                        # pdb.set_trace()
-                        scaler.step(optimizer)
-                        scaler.update()
-                        optimizer.zero_grad()
-                        lr_scheduler.step_update(epoch * num_steps * idx)
-       
-                        loss_meter.update(loss.item(), targets.size(0))
-                        norm_meter.update(grad_norm)
-                        batch_time.update(time.time() - end)
-                # if config.TRAIN.CLIP_GRAD:
-                #     grad_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), config.TRAIN.CLIP_GRAD)
-                # else:
-                #     grad_norm = get_grad_norm(amp.master_params(optimizer))
-            
-            else:
-                #  with torch.autograd.detect_anomaly():
-                # pdb.set_trace()
-                loss = criterion(outputs, targets)
-                if loss.isnan():
-                    pdb.set_trace()
-                    del loss
-                    continue
-                loss = loss / config.TRAIN.ACCUMULATION_STEPS
-                loss.backward()
-                # for name, param in model.named_parameters():
-                #     if param.grad is None:
-                #         print(name)
-                if config.TRAIN.CLIP_GRAD:
-                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
-                else:
-                    grad_norm = get_grad_norm(model.parameters())
-                if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
-                    # pdb.set_trace()
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    lr_scheduler.step_update(epoch * num_steps + idx)
+            if loss.isnan():
+                pdb.set_trace()
+                del loss
+                continue
+            loss = loss / config.TRAIN.ACCUMULATION_STEPS
 
-                    loss_meter.update(loss.item(), targets.size(0))
-                    norm_meter.update(grad_norm)
-                    batch_time.update(time.time() - end)
-        else:
-            if config.AMP_OPT_LEVEL != "O0":
-                with amp.autocast():
-                    loss = criterion(outputs, targets)
-                    scaler.scale(loss).backward()
-                    if config.TRAIN.CLIP_GRAD:
-                        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
-                    else:
-                        grad_norm = get_grad_norm(model.parameters())
-                    
-                    scaler.step(optimizer)
-                    scaler.update()
-                    lr_scheduler.step_update(epoch * num_steps * idx)
-            else:
-                loss = criterion(outputs, targets)
+            scaler.scale(loss).backward()
+
+            #if config.TRAIN.CLIP_GRAD:
+            #    #scaler.unscale_(optimizer)
+            #    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
+            #    #scaler.scale(loss)
+            #else:
+            #    grad_norm = get_grad_norm(model.parameters())
+                
+            if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
+                scaler.unscale_(optimizer)
                 if config.TRAIN.CLIP_GRAD:
                     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
                 else:
                     grad_norm = get_grad_norm(model.parameters())
-                optimizer.step()
-                lr_scheduler.step_update(epoch * num_steps * idx)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+                lr_scheduler.step_update(epoch * num_steps + idx)
+
+                loss_meter.update(loss.item(), targets.size(0))
+                norm_meter.update(grad_norm)
+                batch_time.update(time.time() - end)
+        else:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            
+            if config.TRAIN.CLIP_GRAD:
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
+            else:
+                grad_norm = get_grad_norm(model.parameters())
+                
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.step()
+            lr_scheduler.step_update(epoch * num_steps + idx)
 
             loss_meter.update(loss.item(), targets.size(0))
             norm_meter.update(grad_norm)
             batch_time.update(time.time() - end)
             optimizer.zero_grad()
 
-            # optimizer.zero_grad()
-            # if config.AMP_OPT_LEVEL != "O0":
-            #     with amp.scale_loss(loss, optimizer) as scaled_loss:
-            #         scaled_loss.backward()
-            #     if config.TRAIN.CLIP_GRAD:
-            #         grad_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), config.TRAIN.CLIP_GRAD)
-            #     else:
-            #         grad_norm = get_grad_norm(amp.master_params(optimizer))
-            # else:
-            #     loss.backward()
-            #     if config.TRAIN.CLIP_GRAD:
-            #         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
-            #     else:
-            #         grad_norm = get_grad_norm(model.parameters())
-            # optimizer.step()
-            # lr_scheduler.step_update(epoch * num_steps + idx)
-
         torch.cuda.synchronize()
 
-        # loss_meter.update(loss.item(), targets.size(0))
-        # norm_meter.update(grad_norm)
-        # batch_time.update(time.time() - end)
         end = time.time()
 
         if idx % config.PRINT_FREQ == 0:
@@ -332,7 +288,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 f'loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t'
                 f'grad_norm {norm_meter.val:.4f} ({norm_meter.avg:.4f})\t'
                 f'mem {memory_used:.0f}MB')
-        
+
     epoch_time = time.time() - start
     logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
 
@@ -353,10 +309,11 @@ def validate(config, data_loader, model, logger):
         target = target.cuda(non_blocking=True)
 
         # compute output
-        output = model(images, use_amp=False)
+        with autocast(enabled=config.NATIVE_AMP):
+            output = model(images, use_amp=False)
 
-        # measure accuracy and record loss
-        loss = criterion(output, target)
+            # measure accuracy and record loss
+            loss = criterion(output, target)
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
         acc1 = reduce_tensor(acc1)
@@ -391,13 +348,15 @@ def throughput(data_loader, model, logger):
     for idx, (images, _) in enumerate(data_loader):
         images = images.cuda(non_blocking=True)
         batch_size = images.shape[0]
-        for i in range(50):
-            model(images, use_amp=False)
+        with autocast(enabled=config.NATIVE_AMP):
+            for i in range(50):
+                model(images, use_amp=False)
         torch.cuda.synchronize()
         logger.info(f"throughput averaged with 30 times")
         tic1 = time.time()
-        for i in range(30):
-            model(images, use_amp=False)
+        with autocast(enabled=config.NATIVE_AMP):
+            for i in range(30):
+                model(images, use_amp=False)
         torch.cuda.synchronize()
         tic2 = time.time()
         logger.info(f"batch_size {batch_size} throughput {30 * batch_size / (tic2 - tic1)}")
