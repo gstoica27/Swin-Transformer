@@ -170,6 +170,8 @@ class WindowAttention(nn.Module):
         
     def instantiate_generator_weights(self):
         if 'reverse' in self.mechanism:
+            if self.mechanism_instructions.get('single_weight_matrix', False):
+                self.weight = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
             self.weight_generator = nn.Linear(self.reverse_dim, self.embed_dim * self.embed_dim, bias=False)
             self.reverse_parameters.append(self.weight_generator)
             if self.hypernetwork_bias:
@@ -236,8 +238,8 @@ class WindowAttention(nn.Module):
         
         if self.mechanism_instructions.get('transpose_softmax', True):
             attn = attn.transpose(-2, -1)
-
-        v = self.reverse_activation(v)
+        if not self.mechanism_instructions.get('activate_hyperweights', False):
+            v = self.reverse_activation(v)
         expert_mixture = (attn @ v) # [BW, h, K2, C/h]
         # pdb.set_trace()
         if self.reduce_reverse:
@@ -249,6 +251,9 @@ class WindowAttention(nn.Module):
                 weights = (attn @ v_weights.flatten(-2)).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
             else:
                 weights = self.weight_generator(expert_mixture).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
+                pdb.set_trace()
+                if self.mechanism_instructions.get('activate_hyper_weights', False):
+                    weights = self.reverse_activation(weights)
             
             if self.mechanism_instructions.get('project_input', True):
                 v_r = self.reverse_reducer(x)
@@ -258,23 +263,26 @@ class WindowAttention(nn.Module):
             if self.mechanism_instructions.get('activate_input', True):
                 v_r = self.reverse_activation(v_r)
             v_r = v_r.reshape(BW, K2, self.num_heads, self.embed_dim, 1).transpose(2, 1)
-
-            output = (weights @ v_r).squeeze(-1)
-            if self.hypernetwork_bias:
-                biases = self.bias_generator(expert_mixture)
-                output = biases + output
-            output = output.transpose(2,1).flatten(2)
+            
+            if self.mechanism_instructions.get('single_weight_matrix', False):
+                output = self.weight(v_r.squeeze(-1)).transpose(2, 1).flatten(2)
+            else:
+                output = (weights @ v_r).squeeze(-1)
+                if self.hypernetwork_bias:
+                    biases = self.bias_generator(expert_mixture)
+                    output = biases + output
+                output = output.transpose(2,1).flatten(2)
         else:
             # import pdb;pdb.set_trace()
             proj_weight = self.weight_generator(x).\
                 reshape(BW, K2, self.embed_dim, self.embed_dim)
             output = (expert_mixture.transpose(2, 1) @ proj_weight).reshape(BW, K2, C)
 
-            if self.hypernetwork_bias:
-                proj_bias = self.bias_generator(expert_mixture).\
-                transpose(2, 1).\
-                    reshape(BW, K2, C)
-                output = output + proj_bias
+        if self.hypernetwork_bias:
+            proj_bias = self.bias_generator(expert_mixture).\
+            transpose(2, 1).\
+                reshape(BW, K2, C)
+            output = output + proj_bias
         
         return output
 
@@ -589,6 +597,10 @@ class SwinTransformerBlock(nn.Module):
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+
+        self.non_attention_parameters = [
+            self.norm2, self.mlp
+        ]
 
         if self.shift_size > 0:
             # calculate attention mask for SW-MSA

@@ -153,6 +153,7 @@ def build_model(config):
                 'activate_hyper_weights': config.MODEL.SWIN.ALTERED_ATTENTION.ACTIVATE_HYPER_WEIGHTS,
                 'gen_indiv_hyper_weights': config.MODEL.SWIN.ALTERED_ATTENTION.GEN_INDIV_HYPER_WEIGHTS,
                 'activate_input': config.MODEL.SWIN.ALTERED_ATTENTION.ACTIVATE_INPUT,
+                'single_weight_matrix': config.MODEL.SWIN.ALTERED_ATTENTION.SINGLE_WEIGHT_MATRIX,
             }
         )
     else:

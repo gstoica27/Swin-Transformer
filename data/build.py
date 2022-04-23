@@ -6,13 +6,13 @@
 # --------------------------------------------------------
 
 import os
-import ffcv
-from ffcv.fields import IntField, RGBImageField
-from ffcv.fields.decoders import IntDecoder, RandomResizedCropRGBImageDecoder
-from ffcv.loader import Loader, OrderOption
-from ffcv.transforms import RandomHorizontalFlip, Cutout, NormalizeImage, \
-    RandomTranslate, Convert, ToDevice, ToTensor, ToTorchImage, RandAugment
-from ffcv.transforms.common import Squeeze
+# import ffcv
+# from ffcv.fields import IntField, RGBImageField
+# from ffcv.fields.decoders import IntDecoder, RandomResizedCropRGBImageDecoder
+# from ffcv.loader import Loader, OrderOption
+# from ffcv.transforms import RandomHorizontalFlip, Cutout, NormalizeImage, \
+#     RandomTranslate, Convert, ToDevice, ToTensor, ToTorchImage, RandAugment
+# from ffcv.transforms.common import Squeeze
 import torch
 import numpy as np
 import torch.distributed as dist

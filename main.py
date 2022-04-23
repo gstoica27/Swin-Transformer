@@ -129,10 +129,11 @@ def main(config, logger):
         baseline_accuracy = load_finetunable_base(config, model_without_ddp, logger)
         setup_finetuning_regime(config, model_without_ddp)
         config.FINETUNING.COMP_ACCURACY = baseline_accuracy
-        config.TRAIN.AUTO_RESUME = False
+        config.TRAIN.AUTO_RESUME = True
         config.MODEL.RESUME = False
         config.MODEL.PRETRAINED = False
         config.freeze()
+        logger.info('Trainable arguments: {}'.format([i[0] for i in model_without_ddp.named_parameters() if i[1].requires_grad]))
 
     optimizer = build_optimizer(config, model)
     lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))

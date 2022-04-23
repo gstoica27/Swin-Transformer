@@ -6,6 +6,7 @@
 # --------------------------------------------------------
 
 import os
+from tabnanny import check
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -78,9 +79,9 @@ def setup_finetuning_regime(config, model):
         for layer_idx, layer in enumerate(model.layers):
             if layer_idx in config.MODEL.SWIN.REVERSE_ATTENTION_LOCATIONS:
                 for block_idx, block in enumerate(layer.blocks):
-                    training_params += block.attn.attention_parameters + block.attn.reverse_parameters
-                    if config.FINETUNING.TRAINABLES == 'layer':
-                        training_params += block.attn.output_parameters
+                    training_params += block.attn.attention_parameters + block.attn.reverse_parameters + block.attn.output_parameters
+                    if config.FINETUNING.TRAINABLES == 'block':
+                        training_params += block.non_attention_parameters
                     if config.MODEL.SWIN.ALTERED_ATTENTION.TYPE == 'shared_forward_and_reverse':
                             training_params += block.attn.forward_parameters
         # pdb.set_trace()
@@ -113,13 +114,42 @@ def load_finetunable_base(config, model, logger):
         checkpoint = torch.load(config.FINETUNING.BASE_MODEL, map_location='cpu')
 
     # checkpoint_params = update_model_parameters(checkpoint=checkpoint)
-    missing_tuple = model.load_state_dict(checkpoint['model'], strict=False)
+    # pdb.set_trace()
+    if config.FINETUNING.BASELINE_USES_SWIN_CFG:
+        new_dict = convert_swin_to_biswin(checkpoint['model'])
+    else:
+        new_dict = checkpoint['model']
+    missing_tuple = model.load_state_dict(new_dict, strict=False)
     logger.info(missing_tuple)
 
     if 'max_accuracy' in checkpoint:
             max_accuracy = checkpoint['max_accuracy']
             logger.info('ACCURACY OF BASE MODEL: {:3f}'.format(max_accuracy))
     return max_accuracy
+
+
+def convert_swin_to_biswin(checkpoint_base):
+    checkpoint = {}
+    for name, param in checkpoint_base.items():
+        if 'qkv' in name:
+            enc3 = param.shape[0]
+            split_loc = int(2 * enc3 // 3)
+            qk = param[:split_loc]
+            v = param[split_loc:]
+            new_qk_name = name.replace('qkv', 'qk')
+            new_v_name = name.replace('qkv', 'forward_v')
+            checkpoint[new_qk_name] = qk
+            checkpoint[new_v_name] = v
+            # del checkpoint[name]
+        elif 'attn.proj' in name:
+            new_name = name.replace('attn.proj', 'attn.output_proj')
+            checkpoint[new_name] = param
+            # del checkpoint[name]
+        else:
+            checkpoint[name] = param
+    return checkpoint
+
+           
 
 
 def load_pretrained(config, model, logger=None):
