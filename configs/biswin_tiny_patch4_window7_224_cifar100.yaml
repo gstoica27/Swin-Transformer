@@ -15,15 +15,19 @@ MODEL:
       TYPE: 'reverse'
       REDUCE_REVERSE: True
       REVERSE_ACTIVATION: 'relu'
-      HYPERNETWORK_BIAS: False
+      HYPERNETWORK_BIAS: True
       PROJECT_VALUES: True
       PROJECT_INPUT: True
       VALUE_IS_INPUT: False
-      TRANSPOSE_SOFTMAX: True
+      TRANSPOSE_SOFTMAX: FALSE
       GEN_INDIV_HYPER_WEIGHTS: False
       ACTIVATE_HYPER_WEIGHTS: True
       ACTIVATE_INPUT: False # Should only be True if ACTIVATE_HYPER_WEIGHTS is False and vice-versa
       SINGLE_WEIGHT_MATRIX: False
+      ENFORCE_ORTHONOGALITY: True
+TRAIN:
+  ORTHOGONALITY_LAMBDA: 1e-5
+  ALL_ORTHOGONALITY_LAMBDA: 1e-5
 FINETUNING:
   APPLY_FINETUNING: False
   # BASE_MODEL: /srv/share4/gstoica3/checkpoints/FineTuneSwinReverseHeadBaseCifarFirstStage/biswin_tiny_patch4_window7_224_cifar100/StopEpoch150DiffNought1/ckpt_epoch_144.pth
