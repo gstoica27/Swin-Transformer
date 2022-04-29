@@ -7,7 +7,6 @@
 
 import os
 from numpy import True_
-from transformers import FlaxAutoModelForSequenceClassification
 import yaml
 from yacs.config import CfgNode as CN
 
