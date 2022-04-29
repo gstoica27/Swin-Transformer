@@ -133,6 +133,8 @@ class WindowAttention(nn.Module):
         self.instantiate_output_weights()
         # self.concretify_parameters_sets()
 
+        self.orthogonal_loss = nn.L1Loss()
+
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
     
@@ -162,7 +164,7 @@ class WindowAttention(nn.Module):
                 self.reverse_parameters.append(self.reverse_v)
         elif self.mechanism == 'shared_forward_and_reverse':
             self.forward_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
-            self.reverse_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
+            self.reverse_v = self.forward_v #nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
             self.forward_parameters.append(self.forward_v)
             self.reverse_parameters.append(self.reverse_v)
         else:
@@ -203,12 +205,6 @@ class WindowAttention(nn.Module):
             self.forward_proj = self.reverse_proj = self.output_proj
             self.reverse_proj_drop = self.forward_proj_drop = self.output_drop
         self.output_parameters += [self.attn_drop, self.output_proj, self.output_drop]
-    
-    # def concretify_parameters_sets(self):
-        # pdb.set_trace()
-        # self.attention_parameters = nn.ModuleList(self.attention_parameters)
-        # self.reverse_parameters = nn.ModuleList(self.reverse_parameters)
-        # self.forward_parameters = nn.ModuleList(self.forward_parameters)
 
     def reverse_activation_fn(self, reverse_activation):
         if reverse_activation == 'none':
@@ -322,6 +318,52 @@ class WindowAttention(nn.Module):
         x = self.output_proj(output)
         x = self.output_drop(x)
         return x
+    
+    def concatenate_linear_parameters(self, layer):
+        pdb.set_trace()
+        param = layer.weight.transpose(1, 0)
+        if self.qkv_bias:
+            param = torch.cat((param, layer.bias.reshape(1, -1)))
+        return param
+    
+    def compute_all_orthogonality_loss(self, weight):
+        pdb.set_trace()
+        H_WC = weight.flatten(1)
+        HW_C = weight.flatten(0,1)
+        CH_W = weight.permute(2, 0, 1).flatten(0,1)
+
+        inner_H_WC = H_WC @ H_WC.transpose(1,0) # [H,WC] x [WC,H] -> [H,H]
+        inner_HW_C = HW_C.transpose(1,0) @ HW_C # [C,C]
+        inner_CH_W = CH_W.transpose(1,0) @ CH_W # [W,W]
+
+        H_WC_loss = self.orthogonal_loss(inner_H_WC, torch.eye(inner_H_WC.shape[0]))
+        HW_C_loss = self.orthogonal_loss(inner_HW_C, torch.eye(inner_HW_C.shape[0]))
+        CH_W_loss = self.orthogonal_loss(inner_CH_W, torch.eye(inner_CH_W.shape[0]))
+        return H_WC_loss + HW_C_loss + CH_W_loss
+
+    def compute_reversed_orthognality_norms(self):
+        pdb.set_trace()
+        weight = self.weight.weight
+        A = self.concatenate_linear_parameters(self.forward_v)
+        C = self.concatenate_linear_parameters(self.reverse_reducer)
+
+        h_A = torch.stach(torch.split(A, self.num_heads, dim=1), dim=0) # [h,C+1,C/h]
+        h_C = torch.stach(torch.split(C, self.num_heads, dim=1), dim=0) # [h,C+1,C/h]
+
+        inner_A = torch.bmm(h_A.transpose(2,1), h_A) # [h,C/h,C/h]
+        inner_C = torch.bmm(h_C.transpose(2,1), h_C) # [h,C/h,C/h]
+
+        h_Identity = torch.eye(self.embed_dim).unsqueeze(0).tile(self.num_heads, 1, 1)
+        A_loss = self.orthogonal_loss(inner_A, h_Identity)
+        C_loss = self.orthogonal_loss(inner_C, h_Identity)
+        weight_loss = self.compute_all_orthogonality_loss(weight)
+
+        return {
+            'weight': weight_loss,
+            'A': A_loss,
+            'C': C_loss
+        }
+
     
     def extra_repr(self) -> str:
         return f'dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}'
@@ -925,6 +967,7 @@ class BiAttnSwinTransformer(nn.Module):
         # build layers
         self.layers = nn.ModuleList()
         # pdb.set_trace()
+        self.reverse_attention_layers = []
         for i_layer in range(self.num_layers):
             if i_layer in reverse_attention_locations:
                 layer_mechanism_instructions = mechanism_instructions
@@ -948,6 +991,10 @@ class BiAttnSwinTransformer(nn.Module):
                 mechanism_instructions=layer_mechanism_instructions
             )
             self.layers.append(layer)
+
+            if i_layer in reverse_attention_locations:
+                for block in layer.blocks:
+                    self.reverse_attention_layers.append(block.attn)
 
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)

@@ -230,6 +230,16 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 pdb.set_trace()
                 del loss
                 continue
+            
+            if config.MODEL.SWIN.ENFORCE_ORTHONOGALITY:
+                reverse_attention_layers = model.self.reverse_attention_layers
+                for layer in reverse_attention_layers:
+                    orthogonal_losses = layer.compute_orthogonality_norms()
+                    orth_lambda = config.TRAIN.ORTHOGONALITY_LAMBDA
+                    all_orth_lambda = config.TRAIN.ALL_ORTHOGONALITY_LAMBDA
+                    weight_loss, A_loss, C_loss = orthogonal_losses['weight'], orthogonal_losses['A'], orthogonal_losses['C']
+                    loss += weight_loss * all_orth_lambda + orth_lambda * (A_loss + C_loss)
+
             loss = loss / config.TRAIN.ACCUMULATION_STEPS
 
             scaler.scale(loss).backward()
