@@ -11,10 +11,10 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import pdb
-from ray import tune
+# from ray import tune
 
-from ray.tune.integration.torch import (DistributedTrainableCreator,
-                                        distributed_checkpoint_dir)
+# from ray.tune.integration.torch import (DistributedTrainableCreator,
+#                                         distributed_checkpoint_dir)
 try:
     # noinspection PyUnresolvedReferences
     # from apex import amp

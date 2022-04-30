@@ -131,7 +131,14 @@ class WindowAttention(nn.Module):
         self.instantiate_proj_weights()
         self.instantiate_generator_weights()
         self.instantiate_output_weights()
-        # self.concretify_parameters_sets()
+
+        if self.mechanism_instructions.get('weigh_directions', False):
+            self.lmbda = nn.Parameter(torch.zeros(1, dtype=torch.float32, requires_grad=True))
+        else:
+            self.lmbda = torch.zeros(1, dtype=torch.float32, requires_grad=False)
+        # if torch.cuda.is_available(): 
+        #         self.lmbda = self.lmbda.cuda()
+        self.lmbda_activation = nn.Sigmoid()
 
         self.orthogonal_loss = nn.L1Loss()
 
@@ -234,7 +241,7 @@ class WindowAttention(nn.Module):
         
         if self.mechanism_instructions.get('transpose_softmax', True):
             attn = attn.transpose(-2, -1)
-        if not self.mechanism_instructions.get('activate_hyperweights', False):
+        if not self.mechanism_instructions.get('activate_hyper_weights', False):
             v = self.reverse_activation(v)
         expert_mixture = (attn @ v) # [BW, h, K2, C/h]
         # pdb.set_trace()
@@ -247,7 +254,7 @@ class WindowAttention(nn.Module):
                 weights = (attn @ v_weights.flatten(-2)).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
             else:
                 weights = self.weight_generator(expert_mixture).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
-                pdb.set_trace()
+                # pdb.set_trace()
                 if self.mechanism_instructions.get('activate_hyper_weights', False):
                     weights = self.reverse_activation(weights)
             
@@ -313,6 +320,8 @@ class WindowAttention(nn.Module):
             # pdb.set_trace()
             forward_attn = self.apply_forward_attention(x, attn)
             reverse_attn = self.apply_reverse_attention(x, attn)
+            # forward_weight = self.lmbda_activation(self.lmbda)
+            # reverse_weight = 1 - forward_weight
             output = forward_attn + reverse_attn
         
         x = self.output_proj(output)
@@ -320,14 +329,13 @@ class WindowAttention(nn.Module):
         return x
     
     def concatenate_linear_parameters(self, layer):
-        pdb.set_trace()
         param = layer.weight.transpose(1, 0)
         if self.qkv_bias:
             param = torch.cat((param, layer.bias.reshape(1, -1)))
         return param
     
     def compute_all_orthogonality_loss(self, weight):
-        pdb.set_trace()
+        # pdb.set_trace()
         H_WC = weight.flatten(1)
         HW_C = weight.flatten(0,1)
         CH_W = weight.permute(2, 0, 1).flatten(0,1)
@@ -336,26 +344,27 @@ class WindowAttention(nn.Module):
         inner_HW_C = HW_C.transpose(1,0) @ HW_C # [C,C]
         inner_CH_W = CH_W.transpose(1,0) @ CH_W # [W,W]
 
-        H_WC_loss = self.orthogonal_loss(inner_H_WC, torch.eye(inner_H_WC.shape[0]))
-        HW_C_loss = self.orthogonal_loss(inner_HW_C, torch.eye(inner_HW_C.shape[0]))
-        CH_W_loss = self.orthogonal_loss(inner_CH_W, torch.eye(inner_CH_W.shape[0]))
+        H_WC_loss = self.orthogonal_loss(inner_H_WC, torch.eye(inner_H_WC.shape[0]).cuda())
+        HW_C_loss = self.orthogonal_loss(inner_HW_C, torch.eye(inner_HW_C.shape[0]).cuda())
+        CH_W_loss = self.orthogonal_loss(inner_CH_W, torch.eye(inner_CH_W.shape[0]).cuda())
         return H_WC_loss + HW_C_loss + CH_W_loss
 
     def compute_reversed_orthognality_norms(self):
-        pdb.set_trace()
-        weight = self.weight.weight
-        A = self.concatenate_linear_parameters(self.forward_v)
+        weight = self.weight_generator.weight.reshape(self.embed_dim, self.embed_dim, self.embed_dim)
+        A = self.concatenate_linear_parameters(self.reverse_v)
         C = self.concatenate_linear_parameters(self.reverse_reducer)
 
-        h_A = torch.stach(torch.split(A, self.num_heads, dim=1), dim=0) # [h,C+1,C/h]
-        h_C = torch.stach(torch.split(C, self.num_heads, dim=1), dim=0) # [h,C+1,C/h]
+        h_A = torch.stack(torch.split(A, self.embed_dim, dim=1), dim=0) # [h,C+1,C/h]
+        h_C = torch.stack(torch.split(C, self.embed_dim, dim=1), dim=0) # [h,C+1,C/h]
 
         inner_A = torch.bmm(h_A.transpose(2,1), h_A) # [h,C/h,C/h]
         inner_C = torch.bmm(h_C.transpose(2,1), h_C) # [h,C/h,C/h]
 
         h_Identity = torch.eye(self.embed_dim).unsqueeze(0).tile(self.num_heads, 1, 1)
+        if torch.cuda.is_available(): h_Identity = h_Identity.cuda()
         A_loss = self.orthogonal_loss(inner_A, h_Identity)
         C_loss = self.orthogonal_loss(inner_C, h_Identity)
+        # pdb.set_trace()
         weight_loss = self.compute_all_orthogonality_loss(weight)
 
         return {
@@ -1001,6 +1010,9 @@ class BiAttnSwinTransformer(nn.Module):
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
         self.apply(self._init_weights)
+    
+    def get_reverse_attention_locations(self):
+        return self.reverse_attention_layers
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -1033,7 +1045,7 @@ class BiAttnSwinTransformer(nn.Module):
         x = torch.flatten(x, 1)
         return x
 
-    def forward(self, x, use_amp=True):
+    def forward(self, x, use_amp=True, return_reverse_layers=False):
         if use_amp:
             with torch.cuda.amp.autocast():
                 x = self.forward_features(x)
@@ -1042,6 +1054,9 @@ class BiAttnSwinTransformer(nn.Module):
             x = self.forward_features(x)
             x = self.head(x)
         
+        if return_reverse_layers:
+            reverse_layers = self.reverse_attention_layers
+            return x, reverse_layers
         return x
 
     def flops(self):

@@ -25,9 +25,9 @@ from torch.cuda.amp import GradScaler, autocast
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import accuracy, AverageMeter
 
-from ray import tune
-from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler
+# from ray import tune
+# from ray.tune import CLIReporter
+# from ray.tune.schedulers import ASHAScheduler
 
 from config import get_config
 from models import build_model
@@ -222,7 +222,13 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
             targets = torch.nn.functional.one_hot(targets, num_classes=config.MODEL.NUM_CLASSES)
 
         with autocast(enabled=config.NATIVE_AMP):
-            outputs = model(samples, use_amp=False)
+            outputs = model(
+                samples, 
+                use_amp=False, 
+                return_reverse_layers=config.MODEL.SWIN.ALTERED_ATTENTION.ENFORCE_ORTHONOGALITY
+            )
+            if config.MODEL.SWIN.ALTERED_ATTENTION.ENFORCE_ORTHONOGALITY:
+                outputs, reverse_layers = outputs
             loss = criterion(outputs, targets)
 
         if config.TRAIN.ACCUMULATION_STEPS > 1:
@@ -231,10 +237,10 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 del loss
                 continue
             
-            if config.MODEL.SWIN.ENFORCE_ORTHONOGALITY:
-                reverse_attention_layers = model.self.reverse_attention_layers
+            if config.MODEL.SWIN.ALTERED_ATTENTION.ENFORCE_ORTHONOGALITY:
+                reverse_attention_layers = reverse_layers
                 for layer in reverse_attention_layers:
-                    orthogonal_losses = layer.compute_orthogonality_norms()
+                    orthogonal_losses = layer.compute_reversed_orthognality_norms()
                     orth_lambda = config.TRAIN.ORTHOGONALITY_LAMBDA
                     all_orth_lambda = config.TRAIN.ALL_ORTHOGONALITY_LAMBDA
                     weight_loss, A_loss, C_loss = orthogonal_losses['weight'], orthogonal_losses['A'], orthogonal_losses['C']
