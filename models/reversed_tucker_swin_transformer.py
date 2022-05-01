@@ -178,23 +178,6 @@ class WindowAttention(nn.Module):
             self.J = nn.Parameter(torch.rand((self.dim, self.embed_dim)), requires_grad=True)
             self.U = nn.Parameter(torch.rand((self.embed_dim, self.dim)), requires_grad=True)
             self.reverse_parameters.extend([self.W, self.V, self.J, self.U])
-
-
-            #if self.mechanism_instructions.get('single_weight_matrix', False):
-            #    self.weight = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
-            #self.weight_generator = nn.Linear(self.reverse_dim, self.embed_dim * self.embed_dim, bias=False)
-            #self.reverse_parameters.append(self.weight_generator)
-            #if self.hypernetwork_bias:
-            #    self.bias_generator = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
-            #    self.reverse_parameters.append(self.bias_generator)
-            #if self.reduce_reverse and self.mechanism_instructions.get('project_input', True):
-            #    # pdb.set_trace()
-            #    if self.mechanism_instructions.get('value_is_input', False):
-
-            #        self.reverse_reducer = self.reverse_v
-            #    else:
-            #        self.reverse_reducer = nn.Linear(self.dim, self.dim)
-            #    self.reverse_parameters.append(self.reverse_reducer)
     
     def instantiate_output_weights(self):
         self.attn_drop = nn.Dropout(self.attn_drop)
@@ -213,12 +196,6 @@ class WindowAttention(nn.Module):
             self.forward_proj = self.reverse_proj = self.output_proj
             self.reverse_proj_drop = self.forward_proj_drop = self.output_drop
         self.output_parameters += [self.attn_drop, self.output_proj, self.output_drop]
-    
-    # def concretify_parameters_sets(self):
-        # pdb.set_trace()
-        # self.attention_parameters = nn.ModuleList(self.attention_parameters)
-        # self.reverse_parameters = nn.ModuleList(self.reverse_parameters)
-        # self.forward_parameters = nn.ModuleList(self.forward_parameters)
 
     def reverse_activation_fn(self, reverse_activation):
         if reverse_activation == 'none':

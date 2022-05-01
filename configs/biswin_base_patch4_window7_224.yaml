@@ -2,16 +2,27 @@ DATA:
   DATASET: imagenet
   DATA_PATH: /srv/datasets/ImageNet
 MODEL:
-  TYPE: biswin
+  TYPE: invswin
   NAME: biswin_base_patch4_window7_224
-  DROP_PATH_RATE: 0.5
+  DROP_PATH_RATE: 0.2
   SWIN:
-    EMBED_DIM: 128
-    DEPTHS: [ 2, 2, 18, 2 ]
-    NUM_HEADS: [ 4, 8, 16, 32 ]
+    EMBED_DIM: 96
+    DEPTHS: [ 2, 2, 6, 2 ]
+    NUM_HEADS: [ 3, 6, 12, 24 ]
     WINDOW_SIZE: 7
     REVERSE_ATTENTION_LOCATIONS: [0]
     ALTERED_ATTENTION:
-      TYPE: 'reverse'
-      REDUCE_REVERSE: True
+      TYPE: 'shared_forward_and_reverse'
       REVERSE_ACTIVATION: 'gelu'
+      HYPERNETWORK_BIAS: True
+      ENFORCE_ORTHONOGALITY: False
+TRAIN:
+  ORTHOGONALITY_LAMBDA: 0.
+  ALL_ORTHOGONALITY_LAMBDA: 0.
+FINETUNING:
+  APPLY_FINETUNING: True
+  BASE_MODEL: /srv/share4/gstoica3/checkpoints/swin_transformer/swin_tiny_patch4_window7_224/baseline_fp32/ckpt_epoch_294.pth
+  FREEZE_BASE: False
+  STOP_EPOCH: 75
+  TRAINABLES: head
+  BASELINE_USES_SWIN_CFG: False

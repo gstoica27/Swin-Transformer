@@ -113,7 +113,6 @@ def build_ffcv_dataloader(is_train, config):
     image_pipeline = [RandomResizedCropRGBImageDecoder((224, 224))]
 
     is_imagenet = 'imagenet' in config.DATA.DATASET
-
     IMAGENET_MEAN = np.array([0.485, 0.456, 0.406]) * 255
     IMAGENET_STD = np.array([0.229, 0.224, 0.225]) * 255
     CIFAR100_MEAN = np.array([0.5070751592371323, 0.48654887331495095, 0.4409178433670343])

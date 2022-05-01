@@ -32,6 +32,7 @@ def build_optimizer(config, model, whitelisted_params=None, tune_config=None):
         if 'base_lr' in tune_config:
             base_lr = tune_config['base_lr']
     # pdb.set_trace()
+
     if opt_lower == 'sgd':
         optimizer = optim.SGD(parameters, momentum=config.TRAIN.OPTIMIZER.MOMENTUM, nesterov=True,
                               lr=base_lr, weight_decay=weight_decay)

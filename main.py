@@ -272,6 +272,15 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 norm_meter.update(grad_norm)
                 batch_time.update(time.time() - end)
         else:
+            if config.MODEL.SWIN.ALTERED_ATTENTION.ENFORCE_ORTHONOGALITY:
+                reverse_attention_layers = model.self.reverse_attention_layers
+                for layer in reverse_attention_layers:
+                    orthogonal_losses = layer.compute_orthogonality_norms()
+                    orth_lambda = config.TRAIN.ORTHOGONALITY_LAMBDA
+                    all_orth_lambda = config.TRAIN.ALL_ORTHOGONALITY_LAMBDA
+                    weight_loss, A_loss, C_loss = orthogonal_losses['weight'], orthogonal_losses['A'], orthogonal_losses['C']
+                    loss += weight_loss * all_orth_lambda + orth_lambda * (A_loss + C_loss)
+
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             

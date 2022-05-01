@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from models.reverse_sa import AugmentedWindowAttention
 import pdb
 
 
@@ -634,12 +635,7 @@ class SwinTransformerBlock(nn.Module):
 
         self.norm1 = norm_layer(dim)
 
-        # if mechanism_instructions['type'] == 'forward':
-        #     attn = WindowAttentionOld
-        # else:
-        #     attn = WindowReverseAttention
-
-        self.attn = WindowAttention(
+        self.attn = AugmentedWindowAttention(
             dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop,
             mechanism_instructions=mechanism_instructions)
