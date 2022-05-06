@@ -156,7 +156,7 @@ def build_model(config):
                 'activate_input': config.MODEL.SWIN.ALTERED_ATTENTION.ACTIVATE_INPUT,
                 'single_weight_matrix': config.MODEL.SWIN.ALTERED_ATTENTION.SINGLE_WEIGHT_MATRIX,
                 'weigh_directions': config.MODEL.SWIN.ALTERED_ATTENTION.WEIGH_DIRECTIONS,
-                'enforce_orthogonality': config.MODEL.SWIN.ALTERED_ATTENTION.ENFORCE_ORTHONOGALITY
+                'enforce_orthogonality': config.MODEL.SWIN.ALTERED_ATTENTION.ENFORCE_ORTHONOGALITY,
             }
         )
     elif model_type  == 'invswin':
@@ -183,6 +183,7 @@ def build_model(config):
                 'type': config.MODEL.SWIN.ALTERED_ATTENTION.TYPE,
                 'reverse_activation': config.MODEL.SWIN.ALTERED_ATTENTION.REVERSE_ACTIVATION,
                 'hypernetwork_bias': config.MODEL.SWIN.ALTERED_ATTENTION.HYPERNETWORK_BIAS,
+                'selection_lambda_form': config.MODEL.SWIN.ALTERED_ATTENTION.SELECTION_LAMBDA_FORM
             }
         )
     else:
