@@ -126,10 +126,11 @@ def main(config, logger):
     
     if config.FINETUNING.APPLY_FINETUNING:
         config.defrost()
-        baseline_accuracy = load_finetunable_base(config, model_without_ddp, logger)
+        
+        baseline_accuracy = load_finetunable_base(config, model_without_ddp, logger)#, optimizer, lr_scheduler, scaler)
         setup_finetuning_regime(config, model_without_ddp)
         config.FINETUNING.COMP_ACCURACY = baseline_accuracy
-        config.TRAIN.AUTO_RESUME = True
+        config.TRAIN.AUTO_RESUME = False
         config.MODEL.RESUME = False
         config.MODEL.PRETRAINED = False
         config.freeze()
@@ -309,7 +310,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
             etas = batch_time.avg * (num_steps - idx)
             logger.info(
                 f'Train: [{epoch}/{config.TRAIN.EPOCHS}][{idx}/{num_steps}]\t'
-                f'eta {datetime.timedelta(seconds=int(etas))} lr {lr:.6f}\t'
+                f'eta {datetime.timedelta(seconds=int(etas))} lr {lr:.8f}\t'
                 f'time {batch_time.val:.4f} ({batch_time.avg:.4f})\t'
                 f'loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t'
                 f'grad_norm {norm_meter.val:.4f} ({norm_meter.avg:.4f})\t'

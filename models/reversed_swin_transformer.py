@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from models.reverse_sa import AugmentedWindowAttention
+from models.hybrid_sa import AugmentedWindowAttention
 import pdb
 
 
@@ -172,7 +172,7 @@ class WindowAttention(nn.Module):
                 self.reverse_parameters.append(self.reverse_v)
         elif self.mechanism == 'shared_forward_and_reverse':
             self.forward_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
-            self.reverse_v = self.forward_v #nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
+            self.reverse_v = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
             self.forward_parameters.append(self.forward_v)
             self.reverse_parameters.append(self.reverse_v)
         else:
@@ -646,7 +646,7 @@ class SwinTransformerBlock(nn.Module):
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
         self.non_attention_parameters = [
-            self.norm2, self.mlp
+            self.norm1, self.norm2, self.mlp
         ]
 
         if self.shift_size > 0:

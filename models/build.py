@@ -123,7 +123,7 @@ def build_model(config):
                                 approach_args=config.MODEL.CSAM)
     elif model_type  == 'biswin':
         from .reversed_swin_transformer import BiAttnSwinTransformer
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         model = BiAttnSwinTransformer(
             img_size=config.DATA.IMG_SIZE,
             patch_size=config.MODEL.SWIN.PATCH_SIZE,

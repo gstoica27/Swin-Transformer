@@ -105,7 +105,7 @@ def do_stop_finetuning(config, curr_accuracy, curr_epoch):
         return True
     return False
 
-def load_finetunable_base(config, model, logger):
+def load_finetunable_base(config, model, logger):#, optimizer, lr_scheduler, scaler):
     logger.info(f"==============> Resuming form {config.FINETUNING.BASE_MODEL}....................")
     if config.FINETUNING.BASE_MODEL.startswith('https'):
         checkpoint = torch.hub.load_state_dict_from_url(
@@ -113,6 +113,13 @@ def load_finetunable_base(config, model, logger):
     else:
         checkpoint = torch.load(config.FINETUNING.BASE_MODEL, map_location='cpu')
 
+    # if not config.EVAL_MODE and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
+    #     # pdb.set_trace()
+    #     optimizer.load_state_dict(checkpoint['optimizer'])
+    #     lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+    #     config.TRAIN.START_EPOCH = checkpoint['epoch'] + 1
+    #     if 'amp' in checkpoint and config.AMP_OPT_LEVEL != "O0" and checkpoint['config'].AMP_OPT_LEVEL != "O0":
+    #         scaler.load_state_dict(checkpoint['amp'])
     # checkpoint_params = update_model_parameters(checkpoint=checkpoint)
     # pdb.set_trace()
     if config.FINETUNING.BASELINE_USES_SWIN_CFG:
@@ -134,7 +141,7 @@ def convert_swin_to_biswin(checkpoint_base):
         if 'qkv' in name:
             enc3 = param.shape[0]
             split_loc = int(2 * enc3 // 3)
-            qk = param[:split_loc]
+            qk = param[:split_loc] 
             v = param[split_loc:]
             new_qk_name = name.replace('qkv', 'qk')
             new_v_name = name.replace('qkv', 'forward_v')

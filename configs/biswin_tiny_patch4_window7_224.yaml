@@ -14,15 +14,26 @@ MODEL:
     ALTERED_ATTENTION:
       TYPE: 'shared_forward_and_reverse'
       REVERSE_ACTIVATION: 'gelu'
-      HYPERNETWORK_BIAS: True
+      HYPERNETWORK_BIAS: False
+      SELECTION_LAMBDA_FORM: 'matrix'
       ENFORCE_ORTHONOGALITY: False
+      # PROJECT_VALUES: True
+      # PROJECT_INPUT: True
+      # VALUE_IS_INPUT: False
+      # TRANSPOSE_SOFTMAX: FALSE
+      # GEN_INDIV_HYPER_WEIGHTS: False
+      # ACTIVATE_HYPER_WEIGHTS: False
+      # ACTIVATE_INPUT: True # Should only be True if ACTIVATE_HYPER_WEIGHTS is False and vice-versa
+      # SINGLE_WEIGHT_MATRIX: False
+      # WEIGH_DIRECTIONS: False
 TRAIN:
   ORTHOGONALITY_LAMBDA: 0.
   ALL_ORTHOGONALITY_LAMBDA: 0.
 FINETUNING:
   APPLY_FINETUNING: True
   BASE_MODEL: /srv/share4/gstoica3/checkpoints/swin_transformer/swin_tiny_patch4_window7_224/baseline_fp32/ckpt_epoch_294.pth
+  # BASE_MODEL: /srv/share4/gstoica3/checkpoints/ContinualLearningImgNetSwinSharedBaseFirstStageHead/biswin_tiny_patch4_window7_224/default/ckpt_epoch_5.pth
   FREEZE_BASE: True
-  STOP_EPOCH: 75
+  STOP_EPOCH: 50
   TRAINABLES: head
   BASELINE_USES_SWIN_CFG: False

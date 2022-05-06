@@ -8,6 +8,8 @@ import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import pdb
 
+from transformers import FlaxDistilBertForSequenceClassification, FlaxElectraForSequenceClassification
+
 
 def window_partition(x, window_size):
     """
@@ -74,7 +76,6 @@ class AugmentedWindowAttention(nn.Module):
 
         self.mechanism = mechanism_instructions['type']
         self.activation = self.reverse_activation_fn(mechanism_instructions.get('reverse_activation', 'none'))
-        self.hypernetwork_bias = mechanism_instructions.get('hypernetwork_bias', False)
         self.mechanism_instructions = mechanism_instructions
 
         self.reverse_parameters = []
@@ -103,6 +104,7 @@ class AugmentedWindowAttention(nn.Module):
         self.instantiate_scoring_weights()
         self.instantiate_generator_weights()
         self.instantiate_output_weights()
+        
 
         self.orthogonal_loss = nn.L1Loss()
 
@@ -116,21 +118,31 @@ class AugmentedWindowAttention(nn.Module):
     def instantiate_generator_weights(self):
         if 'reverse' in self.mechanism:
             self.G = nn.Linear(self.embed_dim, self.embed_dim * self.embed_dim, bias=False)
-            self.reverse_parameters.append(self.G)
-            if self.hypernetwork_bias:
-                self.bias_generator = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
-                self.reverse_parameters.append(self.bias_generator)
+            self.bias_generator = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
             self.local_proj = nn.Linear(self.dim, self.dim)
             self.global_proj = nn.Linear(self.dim, self.dim)
-            self.reverse_parameters += [self.local_proj,
-             self.global_proj
-             ]
+            if self.mechanism_instructions.get('selection_lambda_form', 'scalar'):
+                self.selection_lambda = nn.Parameter(torch.tensor(.0, requires_grad=False))
+            else:
+                self.selection_lambda = nn.Parameter(torch.zeros(
+                    (1, self.window_size * self.window_size, 1), 
+                    requires_grad=False)
+                )
+            self.reverse_parameters.append(self.selection_lambda)
+
+            self.reverse_parameters += [self.G, self.bias_generator, self.local_proj, self.global_proj]
     
     def instantiate_output_weights(self):
         self.attn_drop = nn.Dropout(self.attn_drop)
         self.proj = nn.Linear(self.dim, self.dim)
         self.proj_drop = nn.Dropout(self.proj_drop)
         self.output_parameters += [self.attn_drop, self.proj, self.proj_drop]
+    
+    def get_msa_forget_weight(self):
+        return F.sigmoid(self.selection_lambda)
+    
+    def get_bias_forget_weight(self, msa_forget_weight):
+        return 1. - 2 * msa_forget_weight
 
     def reverse_activation_fn(self, reverse_activation):
         if reverse_activation == 'none':
@@ -146,27 +158,24 @@ class AugmentedWindowAttention(nn.Module):
 
     def apply_forward_attention(self, x, attn):
         BW, K2, C = x.shape
-        attn_normal = self.softmax(attn)
         v = self.forward_v(x).reshape(BW, K2, self.num_heads, C // self.num_heads).transpose(2, 1)
-        x = (attn_normal @ v).transpose(1, 2).reshape(BW, K2, C)
+        x = (attn @ v).transpose(1, 2).reshape(BW, K2, C)
         return x
 
     def apply_reverse_attention(self, x, attn):
-        attn_reverse = F.softmax(attn, dim=-2)
         BW, K2, C = x.shape
+        # pdb.set_trace()
         global_inputs = self.activation(self.global_proj(x).reshape(BW, K2, self.num_heads, self.embed_dim).transpose(-3, -2))
         local_inputs = self.activation(self.local_proj(x).reshape(BW, K2, self.num_heads, self.embed_dim).transpose(-3, -2))
 
-        global_summaries = (attn_reverse @ global_inputs)
+        global_summaries = (attn @ global_inputs)
 
-        global_weights = self.G(global_summaries).reshape(BW, K2, self.num_heads, self.embed_dim, self.embed_dim)
-        output = (local_inputs.view(BW, K2, self.num_heads, 1, self.embed_dim) @ global_weights).view(BW, K2, self.num_heads, self.embed_dim)
-        if self.hypernetwork_bias:
-            biases = self.bias_generator(global_summaries)
-            output = output + biases
-        output = output.flatten(2)
-        return output
+        global_weights = self.G(global_inputs).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
+        output = (local_inputs.unsqueeze(-2) @ global_weights).squeeze(-2).transpose(-3, -2).flatten(2)
 
+        biases = self.bias_generator(global_summaries).transpose(-3, -2).flatten(2)
+        return (output, biases)
+    
     def forward(self, x, mask=None):
         # pdb.set_trace()
         BW, K2, C = x.shape
@@ -184,20 +193,23 @@ class AugmentedWindowAttention(nn.Module):
             nW = mask.shape[0]
             attn = attn.view(BW // nW, nW, self.num_heads, K2, K2) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, K2, K2)
+            reverse_attn = F.softmax(attn, dim=-2)
+            attn = self.softmax(attn)
+            
+        else:
+            reverse_attn = F.softmax(attn, dim=-2)
+            attn = self.softmax(attn)
 
         attn = self.attn_drop(attn) # [BW, h, K2, K2]
-        attn_normal = self.softmax(attn)
-        sa_outputs = (attn_normal @ v).transpose(1, 2).reshape(BW, K2, C)
-
-        if self.mechanism == 'reverse':
-            output = self.apply_reverse_attention(x, sa_outputs)
-        elif self.mechanism in {'forward_and_reverse', 'shared_forward_and_reverse'}:
-            # pdb.set_trace()
-            local_refinements = self.apply_reverse_attention(x, attn)
-            output = sa_outputs + local_refinements
+        sa_outputs = (attn @ v).transpose(1, 2).reshape(BW, K2, C)
+        
+        if 'reverse' in self.mechanism:
+            rsa_tucker_outputs, rsa_biases = self.apply_reverse_attention(x, reverse_attn)
+            forget_weight = torch.sigmoid(self.selection_lambda)
+            output = rsa_tucker_outputs + sa_outputs * forget_weight + rsa_biases * (1. - forget_weight)
         else:
             output = sa_outputs
-        
+
         x = self.proj(output)
         x = self.proj_drop(x)
         return x
