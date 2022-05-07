@@ -126,6 +126,11 @@ def load_finetunable_base(config, model, logger):#, optimizer, lr_scheduler, sca
         new_dict = convert_swin_to_biswin(checkpoint['model'])
     else:
         new_dict = checkpoint['model']
+    # aug_dict = {}
+    # for k in new_dict.keys():
+    #     if 'selection_lambda' not in k: 
+    #         aug_dict[k] = new_dict[k]
+    # new_dict = aug_dict
     missing_tuple = model.load_state_dict(new_dict, strict=False)
     logger.info(missing_tuple)
 

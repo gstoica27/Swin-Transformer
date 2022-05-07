@@ -1,4 +1,5 @@
 
+from asyncio.log import logger
 from audioop import bias
 from grpc import xds_server_credentials
 import torch
@@ -119,15 +120,26 @@ class AugmentedWindowAttention(nn.Module):
         if 'reverse' in self.mechanism:
             self.G = nn.Linear(self.embed_dim, self.embed_dim * self.embed_dim, bias=False)
             self.bias_generator = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
-            self.local_proj = nn.Linear(self.dim, self.dim)
-            self.global_proj = nn.Linear(self.dim, self.dim)
-            if self.mechanism_instructions.get('selection_lambda_form', 'scalar'):
-                self.selection_lambda = nn.Parameter(torch.tensor(.0, requires_grad=False))
-            else:
+            self.local_proj = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
+            self.global_proj = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
+            lambda_type = self.mechanism_instructions.get('selection_lambda_form', 'scalar')
+            if lambda_type == 'scalar':
+                logger.info(f'INFO: Lambda Selection Type: {lambda_type}')
+                self.selection_lambda = nn.Parameter(torch.tensor(.0, requires_grad=True))
+            elif lambda_type == 'matrix':
+                logger.info(f'INFO: Lambda Selection Type: {lambda_type}')
                 self.selection_lambda = nn.Parameter(torch.zeros(
-                    (1, self.window_size * self.window_size, 1), 
-                    requires_grad=False)
+                    (1, self.window_size[0] * self.window_size[1], 1), 
+                    requires_grad=True)
                 )
+            elif lambda_type == 'add_only':
+                logger.info(f'INFO: Lambda Selection Type: {lambda_type}')
+                self.selection_lambda = nn.Parameter(torch.tensor(1e5, requires_grad=False))
+            elif lambda_type == 'replace_only':
+                logger.info(f'INFO: Lambda Selection Type: {lambda_type}')
+                self.selection_lambda = nn.Parameter(torch.tensor(1e-5, requires_grad=False))
+            else:
+                raise ValueError(f'Unknown selection lambda: {lambda_type}')
             self.reverse_parameters.append(self.selection_lambda)
 
             self.reverse_parameters += [self.G, self.bias_generator, self.local_proj, self.global_proj]
@@ -201,6 +213,7 @@ class AugmentedWindowAttention(nn.Module):
             attn = self.softmax(attn)
 
         attn = self.attn_drop(attn) # [BW, h, K2, K2]
+        reverse_attn = self.attn_drop(reverse_attn)
         sa_outputs = (attn @ v).transpose(1, 2).reshape(BW, K2, C)
         
         if 'reverse' in self.mechanism:

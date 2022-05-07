@@ -182,7 +182,7 @@ def build_model(config):
             mechanism_instructions={
                 'type': config.MODEL.SWIN.ALTERED_ATTENTION.TYPE,
                 'reverse_activation': config.MODEL.SWIN.ALTERED_ATTENTION.REVERSE_ACTIVATION,
-                'hypernetwork_bias': config.MODEL.SWIN.ALTERED_ATTENTION.HYPERNETWORK_BIAS,
+                # 'hypernetwork_bias': config.MODEL.SWIN.ALTERED_ATTENTION.HYPERNETWORK_BIAS,
                 'selection_lambda_form': config.MODEL.SWIN.ALTERED_ATTENTION.SELECTION_LAMBDA_FORM
             }
         )
