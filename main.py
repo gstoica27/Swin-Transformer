@@ -102,7 +102,7 @@ def main(config, logger):
    
     # if config.AMP_OPT_LEVEL != "O0":
     #     model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False, find_unused_parameters=True)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
     model_without_ddp = model.module
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -226,9 +226,9 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
             outputs = model(
                 samples, 
                 use_amp=False, 
-                return_reverse_layers=config.MODEL.SWIN.ALTERED_ATTENTION.ENFORCE_ORTHONOGALITY
+                return_reverse_layers=config.TRAIN.ENFORCE_ATTENTION_ORTHONOGALITY
             )
-            if config.MODEL.SWIN.ALTERED_ATTENTION.ENFORCE_ORTHONOGALITY:
+            if config.TRAIN.ENFORCE_ATTENTION_ORTHONOGALITY:
                 outputs, reverse_layers = outputs
             loss = criterion(outputs, targets)
 
@@ -238,7 +238,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 del loss
                 continue
             
-            if config.MODEL.SWIN.ALTERED_ATTENTION.ENFORCE_ORTHONOGALITY:
+            if config.TRAIN.ENFORCE_ATTENTION_ORTHONOGALITY:
                 reverse_attention_layers = reverse_layers
                 for layer in reverse_attention_layers:
                     orthogonal_losses = layer.compute_reversed_orthognality_norms()
@@ -273,7 +273,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 norm_meter.update(grad_norm)
                 batch_time.update(time.time() - end)
         else:
-            if config.MODEL.SWIN.ALTERED_ATTENTION.ENFORCE_ORTHONOGALITY:
+            if config.TRAIN.ENFORCE_ATTENTION_ORTHONOGALITY:
                 reverse_attention_layers = model.self.reverse_attention_layers
                 for layer in reverse_attention_layers:
                     orthogonal_losses = layer.compute_orthogonality_norms()
