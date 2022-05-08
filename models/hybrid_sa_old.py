@@ -9,6 +9,8 @@ import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import pdb
 
+from transformers import FlaxDistilBertForSequenceClassification, FlaxElectraForSequenceClassification
+
 
 def window_partition(x, window_size):
     """
@@ -42,7 +44,7 @@ def window_reverse(windows, window_size, H, W):
     return x
 
 
-class HybridWindowAttention(nn.Module):
+class AugmentedWindowAttention(nn.Module):
     """
     mechanism: type of attention to do within a window
         - forward: normal self-attention
@@ -59,7 +61,7 @@ class HybridWindowAttention(nn.Module):
         qk_scale=None, 
         attn_drop=0., 
         proj_drop=0.,
-        is_hybrid=False
+        mechanism_instructions={'type': 'forward'}
     ):
         super().__init__()
         
@@ -73,8 +75,9 @@ class HybridWindowAttention(nn.Module):
         self.attn_drop = attn_drop
         self.proj_drop = proj_drop
 
-        self.is_hybrid = is_hybrid
-        self.activation = nn.GELU()
+        self.mechanism = mechanism_instructions['type']
+        self.activation = self.reverse_activation_fn(mechanism_instructions.get('reverse_activation', 'none'))
+        self.mechanism_instructions = mechanism_instructions
 
         self.reverse_parameters = []
         self.forward_parameters = []
@@ -113,27 +116,45 @@ class HybridWindowAttention(nn.Module):
         self.attention_parameters.append(self.qkv)
         
     def instantiate_generator_weights(self):
-        if self.is_hybrid:
+        if 'reverse' in self.mechanism:
             self.G = nn.Linear(self.embed_dim, self.embed_dim * self.embed_dim, bias=False)
             self.bias_generator = nn.Linear(self.embed_dim, self.embed_dim, bias=False)
             self.local_proj = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
             self.global_proj = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
+            lambda_type = self.mechanism_instructions.get('selection_lambda_form', 'scalar')
+            # pdb.set_trace()
+            if lambda_type == 'scalar':
+                logger.info(f'INFO: Lambda Selection Type: {lambda_type}')
+                self.selection_lambda = nn.Parameter(torch.tensor(.0, requires_grad=True))
+            elif lambda_type == 'matrix':
+                logger.info(f'INFO: Lambda Selection Type: {lambda_type}')
+                self.selection_lambda = nn.Parameter(torch.zeros(
+                    (1, self.window_size[0] * self.window_size[1], 1), 
+                    requires_grad=True)
+                )
+            elif lambda_type == 'add_only':
+                logger.info(f'INFO: Lambda Selection Type: {lambda_type}')
+                self.selection_lambda = nn.Parameter(torch.tensor(1e5, requires_grad=False))
+            elif lambda_type == 'replace_only':
+                logger.info(f'INFO: Lambda Selection Type: {lambda_type}')
+                self.selection_lambda = nn.Parameter(torch.tensor(1e-5, requires_grad=False))
+            else:
+                raise ValueError(f'Unknown selection lambda: {lambda_type}')
+            self.reverse_parameters.append(self.selection_lambda)
 
-            self.selection_lambda = nn.Parameter(torch.tensor(.0, requires_grad=True))
-
-            self.reverse_parameters += [
-                self.selection_lambda,
-                self.G, 
-                self.bias_generator, 
-                self.local_proj, 
-                self.global_proj
-            ]
+            self.reverse_parameters += [self.G, self.bias_generator, self.local_proj, self.global_proj]
     
     def instantiate_output_weights(self):
         self.attn_drop = nn.Dropout(self.attn_drop)
         self.proj = nn.Linear(self.dim, self.dim)
         self.proj_drop = nn.Dropout(self.proj_drop)
         self.output_parameters += [self.attn_drop, self.proj, self.proj_drop]
+    
+    def get_msa_forget_weight(self):
+        return F.sigmoid(self.selection_lambda)
+    
+    def get_bias_forget_weight(self, msa_forget_weight):
+        return 1. - 2 * msa_forget_weight
 
     def reverse_activation_fn(self, reverse_activation):
         if reverse_activation == 'none':
@@ -153,7 +174,7 @@ class HybridWindowAttention(nn.Module):
         x = (attn @ v).transpose(1, 2).reshape(BW, K2, C)
         return x
 
-    def apply_inverse_attention(self, x, attn):
+    def apply_reverse_attention(self, x, attn):
         BW, K2, C = x.shape
         # pdb.set_trace()
         global_inputs = self.activation(self.global_proj(x).reshape(BW, K2, self.num_heads, self.embed_dim).transpose(-3, -2))
@@ -162,9 +183,10 @@ class HybridWindowAttention(nn.Module):
         global_summaries = (attn @ global_inputs)
 
         global_weights = self.G(global_inputs).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
-        Wx = (local_inputs.unsqueeze(-2) @ global_weights).squeeze(-2).transpose(-3, -2).flatten(2)
-        B = self.bias_generator(global_summaries).transpose(-3, -2).flatten(2)
-        return (Wx, B)
+        output = (local_inputs.unsqueeze(-2) @ global_weights).squeeze(-2).transpose(-3, -2).flatten(2)
+
+        biases = self.bias_generator(global_summaries).transpose(-3, -2).flatten(2)
+        return (output, biases)
     
     def forward(self, x, mask=None):
         # pdb.set_trace()
@@ -193,11 +215,11 @@ class HybridWindowAttention(nn.Module):
         attn = self.attn_drop(attn) # [BW, h, K2, K2]
         reverse_attn = self.attn_drop(reverse_attn)
         sa_outputs = (attn @ v).transpose(1, 2).reshape(BW, K2, C)
-        # pdb.set_trace()
-        if self.is_hybrid:
-            isa_W, isa_B = self.apply_inverse_attention(x, reverse_attn)
+        
+        if 'reverse' in self.mechanism:
+            rsa_tucker_outputs, rsa_biases = self.apply_reverse_attention(x, reverse_attn)
             forget_weight = torch.sigmoid(self.selection_lambda)
-            output = isa_W + sa_outputs * forget_weight + isa_B * (1. - forget_weight)
+            output = rsa_tucker_outputs + sa_outputs * forget_weight + rsa_biases * (1. - forget_weight)
         else:
             output = sa_outputs
 
