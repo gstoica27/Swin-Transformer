@@ -59,7 +59,9 @@ class BiDirectionalWindowAttention(nn.Module):
         qk_scale=None, 
         attn_drop=0., 
         proj_drop=0.,
-        is_bidirectional=False
+        is_bidirectional=False,
+        add_layer_norms=False,
+        lambda_value=0.
     ):
         super().__init__()
         
@@ -75,6 +77,8 @@ class BiDirectionalWindowAttention(nn.Module):
 
         self.is_bidirectional = is_bidirectional
         self.activation = nn.GELU()
+        self.add_layer_norms = add_layer_norms
+        self.lambda_value = lambda_value
 
         self.reverse_parameters = []
         self.forward_parameters = []
@@ -107,7 +111,7 @@ class BiDirectionalWindowAttention(nn.Module):
 
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
-    
+
     def instantiate_scoring_weights(self):
         self.qkv = nn.Linear(self.dim, self.dim * 3, bias=self.qkv_bias)
         self.attention_parameters.append(self.qkv)
@@ -119,14 +123,20 @@ class BiDirectionalWindowAttention(nn.Module):
             self.local_proj = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
             self.global_proj = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
 
-            self.selection_lambda = nn.Parameter(torch.tensor(.0, requires_grad=True))
+            self.selection_lambda = nn.Parameter(torch.tensor(self.lambda_value, requires_grad=True))
+
+            if self.add_layer_norms:
+                self.msa_norm = nn.LayerNorm(normalized_shape=self.dim, elementwise_affine=False)
+                self.isa_norm = nn.LayerNorm(normalized_shape=self.dim, elementwise_affine=False)
 
             self.reverse_parameters += [
                 self.selection_lambda,
                 self.G, 
                 self.bias_generator, 
                 self.local_proj, 
-                self.global_proj
+                self.global_proj,
+                self.msa_norm,
+                self.isa_norm
             ]
     
     def instantiate_output_weights(self):
@@ -198,6 +208,12 @@ class BiDirectionalWindowAttention(nn.Module):
         if self.is_bidirectional:
             isa_outputs = self.apply_inverse_attention(x, reverse_attn)
             forget_weight = torch.sigmoid(self.selection_lambda)
+
+            if self.add_layer_norms:
+                tensor_shape = isa_outputs.shape
+                isa_outputs = self.isa_norm(isa_outputs.flatten(0, 1)).reshape(*tensor_shape)
+                sa_outputs = self.msa_norm(sa_outputs.flatten(0, 1)).reshape(*tensor_shape)
+
             output = sa_outputs * forget_weight + isa_outputs * (1. - forget_weight)
         else:
             output = sa_outputs

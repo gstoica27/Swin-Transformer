@@ -77,6 +77,7 @@ _C.MODEL.SWIN.PATCH_NORM = True
 _C.MODEL.SWIN.SUMMARY_TYPE = 'none'
 _C.MODEL.SWIN.SUMMARY_LAYERS = []
 _C.MODEL.SWIN.BIDIRECTIONAL_ATTENTION_LOCATIONS = []
+_C.MODEL.SWIN.BIDIRECTION_ATTENTION_APPLY_NORM = False
 
 # _C.MODEL.SWIN.ALTERED_ATTENTION = CN()
 # _C.MODEL.SWIN.ALTERED_ATTENTION.TYPE = 'forward'
@@ -163,7 +164,7 @@ _C.TRAIN.USE_CHECKPOINT = False
 _C.TRAIN.ENFORCE_ATTENTION_ORTHONOGALITY = False
 _C.TRAIN.ORTHOGONALITY_LAMBDA = 1e-5
 _C.TRAIN.ALL_ORTHOGONALITY_LAMBDA = 1e-5
-
+_C.TRAIN.BISA_LAMBDA_REGIME = (0., 0)
 # LR scheduler
 _C.TRAIN.LR_SCHEDULER = CN()
 _C.TRAIN.LR_SCHEDULER.NAME = 'cosine'
@@ -303,6 +304,7 @@ def update_config(config, args):
         config.THROUGHPUT_MODE = True
 
     config.NATIVE_AMP = args.native_amp
+    # import pdb; pdb.set_trace()
     config.FFCV = args.ffcv
 
     # set local rank for distributed training

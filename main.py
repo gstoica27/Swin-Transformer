@@ -102,7 +102,9 @@ def main(config, logger):
    
     # if config.AMP_OPT_LEVEL != "O0":
     #     model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
+    model = torch.nn.parallel.DistributedDataParallel(
+        model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False, find_unused_parameters=True
+    )
     model_without_ddp = model.module
 
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -167,11 +169,22 @@ def main(config, logger):
         throughput(data_loader_val, model, logger)
         return
 
+    if config.TRAIN.BISA_LAMBDA_REGIME[1] > 0:
+        for name, parameter in model_without_ddp.named_parameters():
+            if 'selection_lambda' in name:
+                parameter.requires_grad = False
+    flag = True
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         if not config.FFCV:
             data_loader_train.sampler.set_epoch(epoch)
+        
+        if config.TRAIN.BISA_LAMBDA_REGIME[1] > 0 and epoch >= config.TRAIN.BISA_LAMBDA_REGIME[1] and not flag:
+            flag = False
+            for name, parameter in model_without_ddp.named_parameters():
+                if 'selection_lambda' in name:
+                    parameter.requires_grad = True
 
         train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, after_ffcv_transform, lr_scheduler, scaler=scaler, logger=logger)
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):

@@ -43,7 +43,7 @@ def build_model(config):
                         patch_norm=config.MODEL.SWIN_MLP.PATCH_NORM,
                         use_checkpoint=config.TRAIN.USE_CHECKPOINT)
     elif model_type  == 'biswin':
-        from .reversed_swin_transformer import BiAttnSwinTransformer
+        from .bisa_swin_transformer import BiAttnSwinTransformer
         model = BiAttnSwinTransformer(
             img_size=config.DATA.IMG_SIZE,
             patch_size=config.MODEL.SWIN.PATCH_SIZE,
@@ -62,6 +62,8 @@ def build_model(config):
             patch_norm=config.MODEL.SWIN.PATCH_NORM,
             use_checkpoint=config.TRAIN.USE_CHECKPOINT,
             reverse_attention_locations=config.MODEL.SWIN.BIDIRECTIONAL_ATTENTION_LOCATIONS,
+            apply_bidirectional_layer_norms=config.MODEL.SWIN.BIDIRECTION_ATTENTION_APPLY_NORM,
+            bidirectional_lambda_value=config.TRAIN.BISA_LAMBDA_REGIME[0]
         )
     elif model_type == 'hybridswin':
         from .hybrid_swin_transformer import HybridSwinTransformer
