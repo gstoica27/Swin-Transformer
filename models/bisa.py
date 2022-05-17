@@ -128,15 +128,17 @@ class BiDirectionalWindowAttention(nn.Module):
             if self.add_layer_norms:
                 self.msa_norm = nn.LayerNorm(normalized_shape=self.dim, elementwise_affine=False)
                 self.isa_norm = nn.LayerNorm(normalized_shape=self.dim, elementwise_affine=False)
+                self.reverse_parameters += [
+                     self.msa_norm,
+                    self.isa_norm
+                ]
 
             self.reverse_parameters += [
                 self.selection_lambda,
                 self.G, 
                 self.bias_generator, 
                 self.local_proj, 
-                self.global_proj,
-                self.msa_norm,
-                self.isa_norm
+                self.global_proj
             ]
     
     def instantiate_output_weights(self):
