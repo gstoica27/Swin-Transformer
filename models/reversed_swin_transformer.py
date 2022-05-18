@@ -307,20 +307,22 @@ class WindowAttention(nn.Module):
             nW = mask.shape[0]
             attn = attn.view(BW // nW, nW, self.num_heads, K2, K2) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, K2, K2)
+            reverse_attn = F.softmax(attn, -2)
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
+            reverse_attn = F.softmax(attn, -2)
 
         attn = self.attn_drop(attn) # [BW, h, K2, K2]
 
         if self.mechanism == 'forward':
             output = self.apply_forward_attention(x, attn)
         elif self.mechanism == 'reverse':
-            output = self.apply_reverse_attention(x, attn)
+            output = self.apply_reverse_attention(x, reverse_attn)
         elif self.mechanism in {'forward_and_reverse', 'shared_forward_and_reverse'}:
             # pdb.set_trace()
             forward_attn = self.apply_forward_attention(x, attn)
-            reverse_attn = self.apply_reverse_attention(x, attn)
+            reverse_attn = self.apply_reverse_attention(x, reverse_attn)
             # forward_weight = self.lmbda_activation(self.lmbda)
             # reverse_weight = 1 - forward_weight
             output = forward_attn + reverse_attn
@@ -635,7 +637,7 @@ class SwinTransformerBlock(nn.Module):
 
         self.norm1 = norm_layer(dim)
 
-        self.attn = AugmentedWindowAttention(
+        self.attn = WindowAttention(
             dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop,
             mechanism_instructions=mechanism_instructions)
