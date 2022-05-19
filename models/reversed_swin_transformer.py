@@ -118,6 +118,7 @@ class SwinTransformerBlock(nn.Module):
         ]
 
         if self.shift_size > 0:
+            pdb.set_trace()
             # calculate attention mask for SW-MSA
             H, W = self.input_resolution
             img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
@@ -132,7 +133,7 @@ class SwinTransformerBlock(nn.Module):
                 for w in w_slices:
                     img_mask[:, h, w, :] = cnt
                     cnt += 1
-            # pdb.set_trace()
+            pdb.set_trace()
             mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
             mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
             attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)

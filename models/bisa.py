@@ -175,8 +175,8 @@ class BiDirectionalWindowAttention(nn.Module):
 
         global_weights = self.G(global_inputs).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
         Wx = (local_inputs.unsqueeze(-2) @ global_weights).squeeze(-2).transpose(-3, -2).flatten(2)
-        B = self.bias_generator(global_summaries).transpose(-3, -2).flatten(2)
-        output = Wx + B
+        # B = self.bias_generator(global_summaries).transpose(-3, -2).flatten(2)
+        output = Wx #+ B
         return output
     
     def forward(self, x, mask=None):
