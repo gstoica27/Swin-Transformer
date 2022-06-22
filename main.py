@@ -136,6 +136,7 @@ def main(config, logger):
         config.MODEL.RESUME = False
         config.MODEL.PRETRAINED = False
         config.freeze()
+        acc1, acc5, loss = validate(config, data_loader_val, model, logger)
         logger.info('Trainable arguments: {}'.format([i[0] for i in model_without_ddp.named_parameters() if i[1].requires_grad]))
 
     optimizer = build_optimizer(config, model)
@@ -182,8 +183,8 @@ def main(config, logger):
     #     if parameter.requires_grad:
     #         print(f'{name}')
     # for g in optimizer.param_groups:
-    #     g['lr'] *= .025
-    # lr_scheduler.base_values = [i * .001 for i in lr_scheduler.base_values]
+    #     g['lr'] *= .1
+    # lr_scheduler.base_values = [i * .1 for i in lr_scheduler.base_values]
     # pdb.set_trace()
     flag = True
     logger.info("Start training")
@@ -264,7 +265,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
             outputs = model(
                 samples, 
                 use_amp=False, 
-                return_reverse_layers=config.TRAIN.ENFORCE_ATTENTION_ORTHONOGALITY
+                # return_reverse_layers=config.TRAIN.ENFORCE_ATTENTION_ORTHONOGALITY
             )
             if config.TRAIN.ENFORCE_ATTENTION_ORTHONOGALITY:
                 outputs, reverse_layers = outputs
@@ -403,6 +404,15 @@ def validate(config, data_loader, model, logger):
                 f'Acc@5 {acc5_meter.val:.3f} ({acc5_meter.avg:.3f})\t'
                 f'Mem {memory_used:.0f}MB')
     logger.info(f' * Acc@1 {acc1_meter.avg:.3f} Acc@5 {acc5_meter.avg:.3f}')
+    lambda_params = {}
+    for name, params in model.named_parameters():
+        if 'lambda' in name:
+            lambda_params[name] = (params.detach().cpu().numpy(), params.requires_grad)
+    if len(lambda_params) > 0:
+        logger.info('======== Lambdas ========')
+        for name, param in lambda_params.items():
+            logger.info(f'{name}: {param}')
+        logger.info('=========================')
     return acc1_meter.avg, acc5_meter.avg, loss_meter.avg
 
 

@@ -55,6 +55,8 @@ def set_weight_decay(model, skip_list=(), skip_keywords=(), whitelisted_params=N
             continue  # frozen weights
         elif len(param.shape) == 1 or name.endswith(".bias") or (name in skip_list) or \
                 check_keywords_in_name(name, skip_keywords):
+            # print(f'Name: {name} | shape: {param.shape}')
+            # pdb.set_trace()
             no_decay.append(param)
             # print(f"{name} has no weight decay")
         else:

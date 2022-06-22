@@ -25,7 +25,8 @@ def build_model(config):
                                 ape=config.MODEL.SWIN.APE,
                                 patch_norm=config.MODEL.SWIN.PATCH_NORM,
                                 use_checkpoint=config.TRAIN.USE_CHECKPOINT,
-                                reverse_attention_locations=config.MODEL.SWIN.REVERSE_ATTENTION_LOCATIONS)
+                                # reverse_attention_locations=config.MODEL.SWIN.BIDIRECTIONAL_ATTENTION_LOCATIONS
+                                )
     elif model_type == 'swin_mlp':
         from .swin_mlp import SwinMLP
         model = SwinMLP(img_size=config.DATA.IMG_SIZE,

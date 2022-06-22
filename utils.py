@@ -77,13 +77,13 @@ def setup_finetuning_regime(config, model):
         for name, param in model.named_parameters():
             param.requires_grad = False
         for layer_idx, layer in enumerate(model.layers):
-            if layer_idx in config.MODEL.SWIN.REVERSE_ATTENTION_LOCATIONS:
+            if layer_idx in config.MODEL.SWIN.BIDIRECTIONAL_ATTENTION_LOCATIONS:
                 for block_idx, block in enumerate(layer.blocks):
                     training_params += block.attn.attention_parameters + block.attn.reverse_parameters + block.attn.output_parameters
                     if config.FINETUNING.TRAINABLES == 'block':
                         training_params += block.non_attention_parameters
-                    if config.MODEL.SWIN.ALTERED_ATTENTION.TYPE == 'shared_forward_and_reverse':
-                            training_params += block.attn.forward_parameters
+                    # if config.MODEL.SWIN.ALTERED_ATTENTION.TYPE == 'shared_forward_and_reverse':
+                            # training_params += block.attn.forward_parameters
         # pdb.set_trace()
         for param in training_params:
             set_requires_grad(param, True)

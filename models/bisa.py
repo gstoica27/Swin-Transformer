@@ -126,8 +126,16 @@ class BiDirectionalWindowAttention(nn.Module):
             self.selection_lambda = nn.Parameter(torch.tensor(self.lambda_value, requires_grad=True))
 
             if self.add_layer_norms:
-                self.msa_norm = nn.LayerNorm(normalized_shape=self.dim, elementwise_affine=False)
-                self.isa_norm = nn.LayerNorm(normalized_shape=self.dim, elementwise_affine=False)
+                self.msa_norm = nn.LayerNorm(normalized_shape=[
+                        # self.window_size[0] * self.window_size[1], 
+                        self.dim
+                    ], elementwise_affine=False
+                )
+                self.isa_norm = nn.LayerNorm(normalized_shape=[
+                        # self.window_size[0] * self.window_size[1], 
+                        self.dim
+                    ], elementwise_affine=False
+                )
                 self.reverse_parameters += [
                      self.msa_norm,
                     self.isa_norm
@@ -145,7 +153,22 @@ class BiDirectionalWindowAttention(nn.Module):
         self.attn_drop = nn.Dropout(self.attn_drop)
         self.proj = nn.Linear(self.dim, self.dim)
         self.proj_drop = nn.Dropout(self.proj_drop)
-        self.output_parameters += [self.attn_drop, self.proj, self.proj_drop]
+        
+        self.output_parameters += [
+            self.attn_drop, 
+            self.proj, 
+            self.proj_drop,
+            # self.msa_drop,
+            ]
+        
+        # if self.is_bidirectional:
+        #     self.misa_proj = nn.Linear(self.dim, self.dim)
+        #     self.misa_drop = nn.Dropout(self.proj_drop_num)
+        #     self.reverse_parameters += [
+        #         self.misa_proj,
+        #         self.misa_drop,
+        #     ]
+
 
     def reverse_activation_fn(self, reverse_activation):
         if reverse_activation == 'none':
@@ -163,20 +186,23 @@ class BiDirectionalWindowAttention(nn.Module):
         BW, K2, C = x.shape
         v = self.forward_v(x).reshape(BW, K2, self.num_heads, C // self.num_heads).transpose(2, 1)
         x = (attn @ v).transpose(1, 2).reshape(BW, K2, C)
+        # x = self.msa_proj(x)
+        # x = self.msa_drop(x)
         return x
 
     def apply_inverse_attention(self, x, attn):
-        BW, K2, C = x.shape
-        # pdb.set_trace()
-        global_inputs = self.activation(self.global_proj(x).reshape(BW, K2, self.num_heads, self.embed_dim).transpose(-3, -2))
-        local_inputs = self.activation(self.local_proj(x).reshape(BW, K2, self.num_heads, self.embed_dim).transpose(-3, -2))
+        B, N, C = x.shape
+        global_inputs = self.activation(self.global_proj(x).reshape(B, N, self.num_heads, self.embed_dim).transpose(-3, -2))
+        local_inputs = self.activation(self.local_proj(x).reshape(B, N, self.num_heads, self.embed_dim).transpose(-3, -2))
 
         global_summaries = (attn @ global_inputs)
 
-        global_weights = self.G(global_inputs).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
+        global_weights = self.G(global_inputs).reshape(B, self.num_heads, N, self.embed_dim, self.embed_dim)
         Wx = (local_inputs.unsqueeze(-2) @ global_weights).squeeze(-2).transpose(-3, -2).flatten(2)
-        # B = self.bias_generator(global_summaries).transpose(-3, -2).flatten(2)
-        output = Wx #+ B
+        bias = self.bias_generator(global_summaries).transpose(-3, -2).flatten(2)
+        output = Wx + bias
+        # output = self.misa_proj(output)
+        # output = self.misa_drop(output)
         return output
     
     def forward(self, x, mask=None):
@@ -212,9 +238,16 @@ class BiDirectionalWindowAttention(nn.Module):
             forget_weight = torch.sigmoid(self.selection_lambda)
 
             if self.add_layer_norms:
+                
+                isa_outputs = isa_outputs.flatten(0,1)
+                sa_outputs = sa_outputs.flatten(0,1)
+
                 tensor_shape = isa_outputs.shape
-                isa_outputs = self.isa_norm(isa_outputs.flatten(0, 1)).reshape(*tensor_shape)
-                sa_outputs = self.msa_norm(sa_outputs.flatten(0, 1)).reshape(*tensor_shape)
+                isa_outputs = self.isa_norm(isa_outputs)
+                sa_outputs = self.msa_norm(sa_outputs)
+
+                isa_outputs = isa_outputs.reshape(BW, K2, C)
+                sa_outputs = sa_outputs.reshape(BW, K2, C)
 
             output = sa_outputs * forget_weight + isa_outputs * (1. - forget_weight)
         else:
@@ -223,6 +256,7 @@ class BiDirectionalWindowAttention(nn.Module):
         x = self.proj(output)
         x = self.proj_drop(x)
         return x
+        # return x
     
     def concatenate_linear_parameters(self, layer):
         pdb.set_trace()

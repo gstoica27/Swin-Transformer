@@ -1,6 +1,7 @@
 DATA:
   DATASET: cifar100
-  DATA_PATH: /storage/home/hcoda1/0/gstoica3/p-jhoffman68-0/gstoica3/research/Swin-Transformer/datasets/cifar-100-python
+  # DATA_PATH: /storage/home/hcoda1/0/gstoica3/p-jhoffman68-0/gstoica3/research/Swin-Transformer/datasets/cifar-100-python
+  DATA_PATH: /nethome/gstoica3/research/pytorch-cifar100/data/cifar-100-python
 MODEL:
   TYPE: swin
   NAME: swin_tiny_patch4_window7_224_cifar100
@@ -10,4 +11,6 @@ MODEL:
     DEPTHS: [ 2, 2, 6, 2 ]
     NUM_HEADS: [ 3, 6, 12, 24 ]
     WINDOW_SIZE: 7
-    REVERSE_ATTENTION_LOCATIONS: []
+    BIDIRECTIONAL_ATTENTION_LOCATIONS: []
+TRAIN:
+  EPOCHS: 600
