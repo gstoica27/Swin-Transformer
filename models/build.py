@@ -87,6 +87,71 @@ def build_model(config):
             use_checkpoint=config.TRAIN.USE_CHECKPOINT,
             reverse_attention_locations=config.MODEL.SWIN.BIDIRECTIONAL_ATTENTION_LOCATIONS,
         )
+    elif model_type == 'orthattswin':
+        from .orthatt_swin_transformer import OrthogonalAttnSwinTransformer
+        model = OrthogonalAttnSwinTransformer(
+            img_size=config.DATA.IMG_SIZE,
+            patch_size=config.MODEL.SWIN.PATCH_SIZE,
+            in_chans=config.MODEL.SWIN.IN_CHANS,
+            num_classes=config.MODEL.NUM_CLASSES,
+            embed_dim=config.MODEL.SWIN.EMBED_DIM,
+            depths=config.MODEL.SWIN.DEPTHS,
+            num_heads=config.MODEL.SWIN.NUM_HEADS,
+            window_size=config.MODEL.SWIN.WINDOW_SIZE,
+            mlp_ratio=config.MODEL.SWIN.MLP_RATIO,
+            qkv_bias=config.MODEL.SWIN.QKV_BIAS,
+            qk_scale=config.MODEL.SWIN.QK_SCALE,
+            drop_rate=config.MODEL.DROP_RATE,
+            drop_path_rate=config.MODEL.DROP_PATH_RATE,
+            ape=config.MODEL.SWIN.APE,
+            patch_norm=config.MODEL.SWIN.PATCH_NORM,
+            use_checkpoint=config.TRAIN.USE_CHECKPOINT,
+            reverse_attention_locations=config.MODEL.SWIN.BIDIRECTIONAL_ATTENTION_LOCATIONS,
+            bidirectional_lambda_value=config.TRAIN.BISA_LAMBDA_REGIME[0]
+        )
+    elif model_type  == 'gsaswin':
+        from .gsa_swin_transformer import GSASwinTransformer
+        model = GSASwinTransformer(
+            img_size=config.DATA.IMG_SIZE,
+            patch_size=config.MODEL.SWIN.PATCH_SIZE,
+            in_chans=config.MODEL.SWIN.IN_CHANS,
+            num_classes=config.MODEL.NUM_CLASSES,
+            embed_dim=config.MODEL.SWIN.EMBED_DIM,
+            depths=config.MODEL.SWIN.DEPTHS,
+            num_heads=config.MODEL.SWIN.NUM_HEADS,
+            window_size=config.MODEL.SWIN.WINDOW_SIZE,
+            mlp_ratio=config.MODEL.SWIN.MLP_RATIO,
+            qkv_bias=config.MODEL.SWIN.QKV_BIAS,
+            qk_scale=config.MODEL.SWIN.QK_SCALE,
+            drop_rate=config.MODEL.DROP_RATE,
+            drop_path_rate=config.MODEL.DROP_PATH_RATE,
+            ape=config.MODEL.SWIN.APE,
+            patch_norm=config.MODEL.SWIN.PATCH_NORM,
+            use_checkpoint=config.TRAIN.USE_CHECKPOINT,
+            reverse_attention_locations=config.MODEL.SWIN.BIDIRECTIONAL_ATTENTION_LOCATIONS,
+            apply_bidirectional_layer_norms=config.MODEL.SWIN.BIDIRECTION_ATTENTION_APPLY_NORM,
+            bidirectional_lambda_value=config.TRAIN.BISA_LAMBDA_REGIME[0]
+        )
+    elif model_type == 'crossswin':
+        from .crossatt_swin_transformer import CrossAttnSwinTransformer
+        model = CrossAttnSwinTransformer(img_size=config.DATA.IMG_SIZE,
+                                patch_size=config.MODEL.SWIN.PATCH_SIZE,
+                                in_chans=config.MODEL.SWIN.IN_CHANS,
+                                num_classes=config.MODEL.NUM_CLASSES,
+                                embed_dim=config.MODEL.SWIN.EMBED_DIM,
+                                depths=config.MODEL.SWIN.DEPTHS,
+                                num_heads=config.MODEL.SWIN.NUM_HEADS,
+                                window_size=config.MODEL.SWIN.WINDOW_SIZE,
+                                mlp_ratio=config.MODEL.SWIN.MLP_RATIO,
+                                qkv_bias=config.MODEL.SWIN.QKV_BIAS,
+                                qk_scale=config.MODEL.SWIN.QK_SCALE,
+                                drop_rate=config.MODEL.DROP_RATE,
+                                drop_path_rate=config.MODEL.DROP_PATH_RATE,
+                                ape=config.MODEL.SWIN.APE,
+                                patch_norm=config.MODEL.SWIN.PATCH_NORM,
+                                use_checkpoint=config.TRAIN.USE_CHECKPOINT,
+                                cross_attention_locations=config.MODEL.SWIN.CROSS_ATTENTION_LOCATIONS,
+                                )
     else:
         raise NotImplementedError(f"Unkown model: {model_type}")
 

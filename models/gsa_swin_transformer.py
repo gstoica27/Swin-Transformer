@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from models.bisa import BiDirectionalWindowAttention
+from models.gsa import GeneralizedWindowAttention
 import pdb
 
 
@@ -204,7 +204,7 @@ class SwinTransformerBlock(nn.Module):
         self.norm1 = norm_layer(dim)
 
         if employ_bidirectional_attn:
-            attn_fn = BiDirectionalWindowAttention
+            attn_fn = GeneralizedWindowAttention
         else:
             attn_fn = WindowAttention
 
@@ -485,7 +485,7 @@ class PatchEmbed(nn.Module):
         return flops
 
 
-class BiAttnSwinTransformer(nn.Module):
+class GSASwinTransformer(nn.Module):
     r""" Swin Transformer
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
           https://arxiv.org/pdf/2103.14030

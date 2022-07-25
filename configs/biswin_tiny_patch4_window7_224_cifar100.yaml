@@ -2,7 +2,7 @@ DATA:
   DATASET: cifar100
   DATA_PATH: /nethome/gstoica3/research/pytorch-cifar100/data/cifar-100-python
 MODEL:
-  TYPE: biswin
+  TYPE: gsaswin
   NAME: biswin_tiny_patch4_window7_224_cifar100
   DROP_PATH_RATE: 0.2
   SWIN:
@@ -10,34 +10,13 @@ MODEL:
     DEPTHS: [ 2, 2, 6, 2 ]
     NUM_HEADS: [ 3, 6, 12, 24 ]
     WINDOW_SIZE: 7
-    # REVERSE_ATTENTION_LOCATIONS: [0]
-    # ALTERED_ATTENTION:
-    #   TYPE: 'shared_forward_and_reverse'
-    #   REDUCE_REVERSE: True
-    #   REVERSE_ACTIVATION: 'gelu'
-    #   HYPERNETWORK_BIAS: True
-    #   PROJECT_VALUES: True
-    #   PROJECT_INPUT: True
-    #   VALUE_IS_INPUT: False
-    #   TRANSPOSE_SOFTMAX: FALSE
-    #   GEN_INDIV_HYPER_WEIGHTS: False
-    #   ACTIVATE_HYPER_WEIGHTS: False
-    #   ACTIVATE_INPUT: True # Should only be True if ACTIVATE_HYPER_WEIGHTS is False and vice-versa
-    #   SINGLE_WEIGHT_MATRIX: False
-    #   ENFORCE_ORTHONOGALITY: False
-    #   WEIGH_DIRECTIONS: False
-    # ALTERED_ATTENTION:
-    #   TYPE: 'shared_forward_and_reverse'
-    #   REVERSE_ACTIVATION: 'gelu'
-    #   HYPERNETWORK_BIAS: True
-    #   ENFORCE_ORTHONOGALITY: False
-    BIDIRECTIONAL_ATTENTION_LOCATIONS: []
+    BIDIRECTIONAL_ATTENTION_LOCATIONS: [0]
     BIDIRECTION_ATTENTION_APPLY_NORM: False
 TRAIN:
   ORTHOGONALITY_LAMBDA: .0
   ALL_ORTHOGONALITY_LAMBDA: .0
-  BISA_LAMBDA_REGIME: (0., 600)
-  EPOCHS: 600
+  BISA_LAMBDA_REGIME: (100., 300)
+  EPOCHS: 300
   WARMUP_EPOCHS: 20
 FINETUNING:
   APPLY_FINETUNING: False

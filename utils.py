@@ -250,6 +250,7 @@ def load_pretrained(config, model, logger=None):
             if logger is not None:
                 logger.warning(f"Error in loading classifier head, re-init classifier head to 0")
 
+    # pdb.set_trace()
     msg = model.load_state_dict(state_dict, strict=False)
     if logger is not None:
         logger.warning(msg)

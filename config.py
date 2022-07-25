@@ -38,6 +38,7 @@ _C.DATA.CACHE_MODE = 'part'
 _C.DATA.PIN_MEMORY = True
 # Number of data loading threads
 _C.DATA.NUM_WORKERS = 8
+_C.DATA.CUSTOM = False
 
 # -----------------------------------------------------------------------------
 # Model settings
@@ -76,6 +77,7 @@ _C.MODEL.SWIN.APE = False
 _C.MODEL.SWIN.PATCH_NORM = True
 _C.MODEL.SWIN.SUMMARY_TYPE = 'none'
 _C.MODEL.SWIN.SUMMARY_LAYERS = []
+_C.MODEL.SWIN.CROSS_ATTENTION_LOCATIONS = []
 _C.MODEL.SWIN.BIDIRECTIONAL_ATTENTION_LOCATIONS = []
 _C.MODEL.SWIN.BIDIRECTION_ATTENTION_APPLY_NORM = False
 
@@ -217,6 +219,11 @@ _C.AUG.MIXUP_PROB = 1.0
 _C.AUG.MIXUP_SWITCH_PROB = 0.5
 # How to apply mixup/cutmix params. Per "batch", "pair", or "elem"
 _C.AUG.MIXUP_MODE = 'batch'
+# -----------------------------------------------------------------------------
+# Cross attention settings
+# -----------------------------------------------------------------------------
+_C.CROSS = CN()
+_C.CROSS.APPLY_EDGE = False
 
 # -----------------------------------------------------------------------------
 # Testing settings
@@ -249,6 +256,7 @@ _C.EVAL_MODE = False
 _C.THROUGHPUT_MODE = False
 # local rank for DistributedDataParallel, given by command line argument
 _C.LOCAL_RANK = 0
+_C.SECOND_EVAL_AUG = None
 
 
 def _update_config_from_file(config, cfg_file):
@@ -302,6 +310,8 @@ def update_config(config, args):
         config.EVAL_MODE = True
     if args.throughput:
         config.THROUGHPUT_MODE = True
+    if args.secondary_eval_aug:
+        config.SECOND_EVAL_AUG = args.secondary_eval_aug
 
     config.NATIVE_AMP = args.native_amp
     # import pdb; pdb.set_trace()

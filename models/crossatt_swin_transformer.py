@@ -5,15 +5,12 @@
 # Written by Ze Liu
 # --------------------------------------------------------
 
-from audioop import bias
-from grpc import xds_server_credentials
+import pdb
+import kornia as K
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from models.bisa import BiDirectionalWindowAttention
-import pdb
 
 
 class Mlp(nn.Module):
@@ -81,7 +78,7 @@ class WindowAttention(nn.Module):
         proj_drop (float, optional): Dropout ratio of output. Default: 0.0
     """
 
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0., **kwargs):
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.):
 
         super().__init__()
         self.dim = dim
@@ -108,6 +105,7 @@ class WindowAttention(nn.Module):
         self.register_buffer("relative_position_index", relative_position_index)
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        # self.q = nn.Linear(dim, dim, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
@@ -115,7 +113,7 @@ class WindowAttention(nn.Module):
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, y, mask=None):
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
@@ -123,6 +121,7 @@ class WindowAttention(nn.Module):
         """
         B_, N, C = x.shape
         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        # q = self.q(y).reshape(B_, N, self.num_heads, C // self.num_heads).transpose(1, 2)
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
         q = q * self.scale
@@ -186,8 +185,7 @@ class SwinTransformerBlock(nn.Module):
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, employ_bidirectional_attn=False,
-                 add_layer_norms=False, lambda_value=0.):
+                 act_layer=nn.GELU, norm_layer=nn.LayerNorm):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -202,27 +200,14 @@ class SwinTransformerBlock(nn.Module):
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
         self.norm1 = norm_layer(dim)
-
-        if employ_bidirectional_attn:
-            attn_fn = BiDirectionalWindowAttention
-        else:
-            attn_fn = WindowAttention
-
-        self.attn = attn_fn(
+        self.attn = WindowAttention(
             dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
-            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop,
-            is_bidirectional=employ_bidirectional_attn, 
-            add_layer_norms=add_layer_norms, 
-            lambda_value=lambda_value)
-        
+            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
+
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-
-        self.non_attention_parameters = [
-            self.norm1, self.norm2, self.mlp
-        ]
 
         if self.shift_size > 0:
             # calculate attention mask for SW-MSA
@@ -239,7 +224,7 @@ class SwinTransformerBlock(nn.Module):
                 for w in w_slices:
                     img_mask[:, h, w, :] = cnt
                     cnt += 1
-            # pdb.set_trace()
+
             mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
             mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
             attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
@@ -249,48 +234,66 @@ class SwinTransformerBlock(nn.Module):
 
         self.register_buffer("attn_mask", attn_mask)
 
-    def forward(self, x):
+    def forward(self, x, y, do_cross_attn=True):
         H, W = self.input_resolution
         B, L, C = x.shape
-        try:
-            assert L == H * W, "input feature has wrong size"
-        except:
-            pdb.set_trace()
+        assert L == H * W, "input feature has wrong size"
 
         shortcut = x
+        y_shortcut = y
         x = self.norm1(x)
+        y = self.norm1(y)
         x = x.view(B, H, W, C)
-
+        y = y.view(B, H, W, C)
         # cyclic shift
         if self.shift_size > 0:
             shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+            shifted_y = torch.roll(y, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
         else:
             shifted_x = x
+            shifted_y = y
 
         # partition windows
         x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+        y_windows = window_partition(shifted_y, self.window_size)  # nW*B, window_size, window_size, C
+        y_windows = y_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
 
         # W-MSA/SW-MSA
-        attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
-        # if self.attn_mask is not None:
-        #     pdb.set_trace()
+        attn_windows = self.attn(
+            x_windows, 
+            y=x_windows, 
+            mask=self.attn_mask
+        )  # nW*B, window_size*window_size, C
+        y_attn_windows = self.attn(
+            y_windows, 
+            y=x_windows if do_cross_attn else y_windows, 
+            mask=self.attn_mask
+        )  # nW*B, window_size*window_size, C
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
+        y_attn_windows = y_attn_windows.view(-1, self.window_size, self.window_size, C)
         shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
+        shifted_y = window_reverse(y_attn_windows, self.window_size, H, W)
 
         # reverse cyclic shift
         if self.shift_size > 0:
             x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+            y = torch.roll(shifted_y, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
         else:
             x = shifted_x
+            y = shifted_y
         x = x.view(B, H * W, C)
+        y = y.view(B, H * W, C)
 
         # FFN
         x = shortcut + self.drop_path(x)
         x = x + self.drop_path(self.mlp(self.norm2(x)))
 
-        return x
+        y = y_shortcut + self.drop_path(y)
+        y = y + self.drop_path(self.mlp(self.norm2(y)))
+
+        return x, y
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, " \
@@ -320,7 +323,7 @@ class PatchMerging(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm, approach_args=None):
+    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
@@ -359,6 +362,7 @@ class PatchMerging(nn.Module):
         flops += (H // 2) * (W // 2) * 4 * self.dim * 2 * self.dim
         return flops
 
+
 class BasicLayer(nn.Module):
     """ A basic Swin Transformer layer for one stage.
 
@@ -381,9 +385,7 @@ class BasicLayer(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
-                 approach_args={}, employ_bidirectional_attn=False, add_layer_norms=False,
-                 lambda_value=0.):
+                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
         super().__init__()
         self.dim = dim
@@ -400,30 +402,25 @@ class BasicLayer(nn.Module):
                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
                                  drop=drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                 norm_layer=norm_layer,
-                                 employ_bidirectional_attn=employ_bidirectional_attn,
-                                 add_layer_norms=add_layer_norms,
-                                lambda_value=lambda_value, 
-                                )
+                                 norm_layer=norm_layer)
             for i in range(depth)])
-        # pdb.set_trace()
+
         # patch merging layer
         if downsample is not None:
-            self.downsample = downsample(
-                input_resolution, dim=dim, norm_layer=norm_layer, approach_args=approach_args
-            )
+            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
         else:
             self.downsample = None
 
-    def forward(self, x):
+    def forward(self, x, y, do_cross_attn=True):
         for blk in self.blocks:
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x)
             else:
-                x = blk(x)
+                x, y = blk(x, y, do_cross_attn=do_cross_attn)
         if self.downsample is not None:
             x = self.downsample(x)
-        return x
+            y = self.downsample(y)
+        return x, y
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
@@ -485,7 +482,7 @@ class PatchEmbed(nn.Module):
         return flops
 
 
-class BiAttnSwinTransformer(nn.Module):
+class CrossAttnSwinTransformer(nn.Module):
     r""" Swin Transformer
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
           https://arxiv.org/pdf/2103.14030
@@ -516,11 +513,7 @@ class BiAttnSwinTransformer(nn.Module):
                  window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False,
-                 reverse_attention_locations=[],
-                 apply_bidirectional_layer_norms=False,
-                 bidirectional_lambda_value=0.,
-                 **kwargs):
+                 use_checkpoint=False, cross_attention_locations=[0,1,2,3], **kwargs):
         super().__init__()
 
         self.num_classes = num_classes
@@ -530,7 +523,7 @@ class BiAttnSwinTransformer(nn.Module):
         self.patch_norm = patch_norm
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.mlp_ratio = mlp_ratio
-
+        self.cross_attention_locations = cross_attention_locations
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,
@@ -551,48 +544,27 @@ class BiAttnSwinTransformer(nn.Module):
 
         # build layers
         self.layers = nn.ModuleList()
-        # pdb.set_trace()
-        self.reverse_attention_layers = []
         for i_layer in range(self.num_layers):
-            if i_layer in reverse_attention_locations:
-                employ_bidirectional_attn = True
-                add_layer_norms = apply_bidirectional_layer_norms
-            else:
-                employ_bidirectional_attn = False
-                add_layer_norms = False
-
-            layer = BasicLayer(
-                dim=int(embed_dim * 2 ** i_layer),
-                input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                    patches_resolution[1] // (2 ** i_layer)),
-                depth=depths[i_layer],
-                num_heads=num_heads[i_layer],
-                window_size=window_size,
-                mlp_ratio=self.mlp_ratio,
-                qkv_bias=qkv_bias, qk_scale=qk_scale,
-                drop=drop_rate, attn_drop=attn_drop_rate,
-                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                norm_layer=norm_layer,
-                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
-                use_checkpoint=use_checkpoint,
-                employ_bidirectional_attn=employ_bidirectional_attn,
-                add_layer_norms=add_layer_norms,
-                lambda_value=bidirectional_lambda_value
-            )
+            layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
+                               input_resolution=(patches_resolution[0] // (2 ** i_layer),
+                                                 patches_resolution[1] // (2 ** i_layer)),
+                               depth=depths[i_layer],
+                               num_heads=num_heads[i_layer],
+                               window_size=window_size,
+                               mlp_ratio=self.mlp_ratio,
+                               qkv_bias=qkv_bias, qk_scale=qk_scale,
+                               drop=drop_rate, attn_drop=attn_drop_rate,
+                               drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                               norm_layer=norm_layer,
+                               downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
+                               use_checkpoint=use_checkpoint)
             self.layers.append(layer)
-
-            if i_layer in reverse_attention_locations:
-                for block in layer.blocks:
-                    self.reverse_attention_layers.append(block.attn)
 
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
         self.apply(self._init_weights)
-    
-    def get_reverse_attention_locations(self):
-        return self.reverse_attention_layers
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -600,11 +572,8 @@ class BiAttnSwinTransformer(nn.Module):
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.LayerNorm):
-            try:
-                nn.init.constant_(m.bias, 0)
-                nn.init.constant_(m.weight, 1.0)
-            except:
-                pass
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
 
     @torch.jit.ignore
     def no_weight_decay(self):
@@ -613,33 +582,62 @@ class BiAttnSwinTransformer(nn.Module):
     @torch.jit.ignore
     def no_weight_decay_keywords(self):
         return {'relative_position_bias_table'}
-
-    def forward_features(self, x):
+    
+    def prepare_input(self, x):
         x = self.patch_embed(x)
         if self.ape:
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
-
-        for layer in self.layers:
-            x = layer(x)
-
+        return x
+    
+    def pooler(self, x):
         x = self.norm(x)  # B L C
         x = self.avgpool(x.transpose(1, 2))  # B C 1
         x = torch.flatten(x, 1)
         return x
 
-    def forward(self, x, use_amp=True, return_reverse_layers=False):
-        if use_amp:
-            with torch.cuda.amp.autocast():
-                x = self.forward_features(x)
-                x = self.head(x)
-        else:
-            x = self.forward_features(x)
-            x = self.head(x)
+    def forward_features(self, x, y=None):
+        # pdb.set_trace()
+        # pdb.set_trace()
+        # x = self.patch_embed(x)
+        # if self.ape:
+        #     x = x + self.absolute_pos_embed
+        # x = self.pos_drop(x)
+        # pdb.set_trace()
+        x = self.prepare_input(x)
         
-        if return_reverse_layers:
-            reverse_layers = self.reverse_attention_layers
-            return x, reverse_layers
+        if y is not None:
+            y = self.prepare_input(y)
+
+        # if y is not None:
+        #     y = self.patch_embed(y)
+        #     y = y + self.absolute_pos_embed if self.ape else y
+        #     y = self.pos_drop(y)
+        # pdb.set_trace()
+        for idx, layer in enumerate(self.layers):
+            x, y = layer(x, y, do_cross_attn=idx in self.cross_attention_locations)
+        x = x + y
+        x = self.norm(x)  # B L C
+        x = self.avgpool(x.transpose(1, 2))  # B C 1
+        x = torch.flatten(x, 1)
+        # x = self.pooler(x)
+        # y = self.pooler(y)
+        return x, y
+
+    def forward(self, x, y=None, use_amp=False, combine_streams=True, target=None):
+        # if apply_cross_attention:
+        #     self.cross_attention_locations = [0, 1, 2, 3]
+        # else:
+        #     self.cross_attention_locations = []
+        if y is None:
+            y = x
+        # with torch.cuda.amp.autocast():
+        x, y = self.forward_features(x, y)
+        x = self.head(x)
+        # y = self.head(y)
+        # if not torch.all(y.argmax(-1) == x.argmax(-1)): pdb.set_trace()
+        # if combine_streams:
+            # x = x + y
         return x
 
     def flops(self):
@@ -650,46 +648,4 @@ class BiAttnSwinTransformer(nn.Module):
         flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
         return flops
-
-
-class ClassificationAttention(nn.Module):
-    def __init__(self, num_classes, classes_dim, feature_dim, num_heads=1, add_position_embedding=False, query_generated_values=False):
-        super().__init__()
-        self.num_classes = num_classes
-        self.classes_dim = classes_dim
-        self.feature_dim = feature_dim
-        self.embed_dim = feature_dim // num_heads
-        self.scale = qk_scale or embed_dim ** -0.5
-        self.num_heads = num_heads
-
-        self.add_position_embedding = add_position_embedding
-        self.query_proj = nn.Linear(self.classes_dim, self.feature_dim)
-        self.key_proj = nn.Linear(self.feature_dim, self.feature_dim)
-
-        self.class_embeddings = nn.Linear(self.num_classes, self.classes_dim, bias=False).weight
-        self.query_generated_values = query_generated_values
-        if query_generated_values:
-            self.value_proj_weight = nn.Linear(self.classes_dim, self.feature_dim * self.feature_dim, bias=False)
-            self.value_proj_bias = nn.Linear(self.classes_dim, self.feature_dim, bias=False)
-        else:
-            self.value_proj = nn.Linear(self.feature_dim, self.feature_dim)
-    
-    def forward(self, features):
-        B, N, C = features.shape
-        queries = self.query_proj(self.class_embeddings).reshape(B, N, self.num_heads, self.embed_dim).transpose(1, 2)
-        keys = self.key_proj(features).reshape(B, N, self.num_heads, self.embed_dim).transpose(1, 2)
-        
-        queries = queries * self.scale
-        scores = (queries @ keys.transpose(-2, -1))
-        attn = F.softmax(scores, dim=-1) # [B, h, Cls, N]
-
-        if self.query_generated_values:
-            value_proj_weight = self.value_proj_weight(self.class_embeddings).reshape(self.num_classes, self.feature_dim, self.feature_dim).transpose(0, 2)
-            value_proj_bias = self.value_proj_bias(self.class_embeddings).reshape(1, self.num_classes, 1, self.feature_dim)
-            classwise_projs = (features @ value_proj_weight).permute(0, 3, 1, 2) + value_proj_bias
-            class_head_projs = classwise_projs.reshape(
-                B, self.num_classes, N, self.feature_dim
-            ).reshape(
-                    B, self.num_classes, N, self.num_heads, self.embed_dim
-                ).permute(0, 3, 1, 2, 4) # [B, h, Cls, N, E]
-            classwise_values = torch.einsum('abcd,abcde->abce', attn, class_head_projs).permute(0, 2, 3, 1, 4).flatten(3)
+ 

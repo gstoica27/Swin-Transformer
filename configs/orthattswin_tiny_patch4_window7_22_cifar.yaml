@@ -1,9 +1,9 @@
 DATA:
-  DATASET: imagenet
-  DATA_PATH: /srv/datasets/ImageNet
+  DATASET: cifar100
+  DATA_PATH: /nethome/gstoica3/research/pytorch-cifar100/data/cifar-100-python
 MODEL:
-  TYPE: biswin
-  NAME: biswin_tiny_patch4_window7_224
+  TYPE: orthattswin
+  NAME: orthattswin_tiny_patch4_window7_22_cifar
   DROP_PATH_RATE: 0.2
   SWIN:
     EMBED_DIM: 96
@@ -11,12 +11,11 @@ MODEL:
     NUM_HEADS: [ 3, 6, 12, 24 ]
     WINDOW_SIZE: 7
     BIDIRECTIONAL_ATTENTION_LOCATIONS: [0, 1, 2, 3]
-    BIDIRECTION_ATTENTION_APPLY_NORM: False
 TRAIN:
   ENFORCE_ATTENTION_ORTHONOGALITY: False
   ORTHOGONALITY_LAMBDA: 0.
   ALL_ORTHOGONALITY_LAMBDA: 0.
-  BISA_LAMBDA_REGIME: (100., 300)
+  BISA_LAMBDA_REGIME: (0., 300)
   EPOCHS: 300
   WARMUP_EPOCHS: 20
 FINETUNING:

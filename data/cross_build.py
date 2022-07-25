@@ -18,7 +18,7 @@ import numpy as np
 import torch.distributed as dist
 from torchvision import datasets, transforms
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.data import Mixup
+from .custom_mixup import CustomMixup
 from timm.data import create_transform
 
 from .cached_image_folder import CachedImageFolder
@@ -98,7 +98,7 @@ def build_loader(config):
     mixup_fn = None
     mixup_active = config.AUG.MIXUP > 0 or config.AUG.CUTMIX > 0. or config.AUG.CUTMIX_MINMAX is not None
     if mixup_active:
-        mixup_fn = Mixup(
+        mixup_fn = CustomMixup(
             mixup_alpha=config.AUG.MIXUP, cutmix_alpha=config.AUG.CUTMIX, cutmix_minmax=config.AUG.CUTMIX_MINMAX,
             prob=config.AUG.MIXUP_PROB, switch_prob=config.AUG.MIXUP_SWITCH_PROB, mode=config.AUG.MIXUP_MODE,
             label_smoothing=config.MODEL.LABEL_SMOOTHING, num_classes=config.MODEL.NUM_CLASSES)
@@ -223,7 +223,7 @@ def build_loader_tune(config):
     mixup_fn = None
     mixup_active = config.AUG.MIXUP > 0 or config.AUG.CUTMIX > 0. or config.AUG.CUTMIX_MINMAX is not None
     if mixup_active:
-        mixup_fn = Mixup(
+        mixup_fn = CustomMixup(
             mixup_alpha=config.AUG.MIXUP, cutmix_alpha=config.AUG.CUTMIX, cutmix_minmax=config.AUG.CUTMIX_MINMAX,
             prob=config.AUG.MIXUP_PROB, switch_prob=config.AUG.MIXUP_SWITCH_PROB, mode=config.AUG.MIXUP_MODE,
             label_smoothing=config.MODEL.LABEL_SMOOTHING, num_classes=config.MODEL.NUM_CLASSES)
@@ -245,11 +245,15 @@ def build_dataset(is_train, config):
         nb_classes = 1000
     elif config.DATA.DATASET == 'cifar100':
         root = os.path.join(config.DATA.DATA_PATH)
-        if config.DATA.CUSTOM:
-            dataset = CustomCIFAR100(root=root, train=is_train, download=True, transform=transform)
-        else:
-            dataset = datasets.CIFAR100(root=root, train=is_train, download=True, transform=transform)
+        dataset = CustomCIFAR100(
+            root=root, 
+            train=is_train, 
+            download=True, 
+            transform=transform, 
+            secondary_augmentation=config.SECOND_EVAL_AUG
+        )
         nb_classes = 100
+        
     elif config.DATA.DATASET == 'imagenet22K':
         raise NotImplementedError("Imagenet-22K will come soon.")
     else:

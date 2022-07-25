@@ -42,7 +42,7 @@ def window_reverse(windows, window_size, H, W):
     return x
 
 
-class BiDirectionalWindowAttention(nn.Module):
+class GeneralizedWindowAttention(nn.Module):
     """
     mechanism: type of attention to do within a window
         - forward: normal self-attention
@@ -113,43 +113,40 @@ class BiDirectionalWindowAttention(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
 
     def instantiate_scoring_weights(self):
-        self.qkv = nn.Linear(self.dim, self.dim * 3, bias=self.qkv_bias)
-        self.attention_parameters.append(self.qkv)
+        self.qk = nn.Linear(self.dim, self.dim * 2, bias=self.qkv_bias)
+        self.attention_parameters.append(self.qk)
         
     def instantiate_generator_weights(self):
         # if self.is_bidirectional:
-        self.G = nn.Linear(self.embed_dim, self.embed_dim * self.embed_dim, bias=False)
-        self.input_encoder = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
-        self.generator_encoder = nn.Linear(self.dim, self.dim, bias=self.qkv_bias)
-        self.output_decoder = nn.Linear(self.embed_dim, self.dim, bias=False)
+        self.G = nn.Linear(1, self.dim * self.embed_dim * self.num_heads, bias=False)
+        self.bottleneck = nn.Linear(self.dim, 1, bias=self.qkv_bias)
         if self.qkv_bias:
-            self.bias_generator = nn.Linear(self.dim, self.dim, bias=False)
+            self.B = nn.Linear(1, self.dim, bias=False)
 
-        self.selection_lambda = nn.Parameter(torch.tensor(self.lambda_value, requires_grad=True))
-
-        if self.add_layer_norms:
-            self.msa_norm = nn.LayerNorm(normalized_shape=[
-                    # self.window_size[0] * self.window_size[1], 
-                    self.dim
-                ], elementwise_affine=False
-            )
-            self.isa_norm = nn.LayerNorm(normalized_shape=[
-                    # self.window_size[0] * self.window_size[1], 
-                    self.dim
-                ], elementwise_affine=False
-            )
-            self.reverse_parameters += [
-                self.msa_norm,
-                self.isa_norm
-            ]
+        # if self.add_layer_norms:
+        #     self.msa_norm = nn.LayerNorm(normalized_shape=[
+        #             # self.window_size[0] * self.window_size[1], 
+        #             self.dim
+        #         ], elementwise_affine=False
+        #     )
+        #     self.isa_norm = nn.LayerNorm(normalized_shape=[
+        #             # self.window_size[0] * self.window_size[1], 
+        #             self.dim
+        #         ], elementwise_affine=False
+        #     )
+        #     self.reverse_parameters += [
+        #         self.msa_norm,
+        #         self.isa_norm
+        #     ]
 
         self.reverse_parameters += [
-            self.selection_lambda,
+            # self.selection_lambda,
             self.G, 
-            self.bias_generator, 
-            self.input_encoder, 
-            self.generator_encoder,
-            self.output_decoder,
+            self.B, 
+            self.bottleneck,
+            # self.input_encoder, 
+            # self.generator_encoder,
+            # self.output_decoder,
         ]
     
     def instantiate_output_weights(self):
@@ -185,25 +182,6 @@ class BiDirectionalWindowAttention(nn.Module):
         elif reverse_activation == 'tanh':
             return nn.Tanh()
 
-    # def apply_forward_attention(self, x, attn):
-    #     BW, K2, C = x.shape
-    #     v = self.forward_v(x).reshape(BW, K2, self.num_heads, C // self.num_heads).transpose(2, 1)
-    #     x = (attn @ v).transpose(1, 2).reshape(BW, K2, C)
-    #     return x
-
-    # def apply_inverse_attention(self, x, attn):
-    #     B, N, C = x.shape
-    #     value_inputs = self.activation(self.generator_encoder(x).reshape(B, N, self.num_heads, self.embed_dim).transpose(-3, -2))
-    #     query_inputs = self.activation(self.input_encoder(x).reshape(B, N, self.num_heads, self.embed_dim).transpose(-3, -2))
-
-    #     global_summaries = (attn @ value_inputs)
-
-    #     global_weights = self.G(value_inputs).reshape(B, self.num_heads, N, self.embed_dim, self.embed_dim)
-    #     Wx = (query_inputs.unsqueeze(-2) @ global_weights).squeeze(-2).transpose(-3, -2).flatten(2)
-    #     bias = self.bias_generator(global_summaries).transpose(-3, -2).flatten(2)
-    #     output = Wx + bias
-    #     return output
-
     def complete_projection_weight(self, partial_weights):
         remaining_weight_component = self.output_decoder.weight.reshape(self.num_heads, self.embed_dim, self.embed_dim)
         return torch.einsum('abcde,bef->abcdf', partial_weights, remaining_weight_component)
@@ -211,8 +189,8 @@ class BiDirectionalWindowAttention(nn.Module):
     def forward(self, x, mask=None):
         # pdb.set_trace()
         BW, K2, C = x.shape
-        qkv = self.qkv(x).reshape(BW, K2, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+        qkv = self.qk(x).reshape(BW, K2, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k = qkv[0], qkv[1]  # make torchscript happy (cannot use tensor as tuple)
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
 
@@ -225,75 +203,22 @@ class BiDirectionalWindowAttention(nn.Module):
             nW = mask.shape[0]
             attn = attn.view(BW // nW, nW, self.num_heads, K2, K2) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, K2, K2)
-            reverse_attn = F.softmax(attn, dim=-2)
             attn = self.softmax(attn)
             
         else:
-            reverse_attn = F.softmax(attn, dim=-2)
             attn = self.softmax(attn)
-
         attn = self.attn_drop(attn) # [BW, h, K2, K2]
-        reverse_attn = self.attn_drop(reverse_attn)
-        sa_outputs = (attn @ v).transpose(1, 2).reshape(BW, K2, C)
+
+        queryheaded_x = torch.einsum('abcd,ade->abce', attn, x) # [B, H, Q, D]
+        bottleneck = self.bottleneck(x)
         # pdb.set_trace()
-
-        value_inputs = self.activation(self.generator_encoder(x).reshape(BW, K2, self.num_heads, self.embed_dim).transpose(-3, -2)) # [B,H,N,E]
-        query_inputs = self.activation(self.input_encoder(x).reshape(BW, K2, self.num_heads, self.embed_dim).transpose(-3, -2))     # [B,H,N,E]
-        G = self.G.weight.reshape(self.embed_dim, self.embed_dim, self.embed_dim)
-        head_G = (self.output_decoder.weight @ G).reshape(self.num_heads, self.embed_dim, self.embed_dim, self.embed_dim)           # [H,E,E,E]
-
-        # Regular Attention
-        value_projection_weights = torch.einsum('abcd,bdef->abcef', query_inputs, head_G)
-        # partial_value_weights = self.G(query_inputs).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
-        # value_projection_weights = self.complete_projection_weight(partial_value_weights)
-        head_value_inputs = (attn @ value_inputs)
-        kv_on_q = (head_value_inputs.unsqueeze(-2) @ value_projection_weights).squeeze(-2).transpose(-3, -2).flatten(2)
-
+        value_proj = self.G(bottleneck).reshape(BW, K2, self.dim, self.num_heads, self.embed_dim).permute(0, 3, 1, 2, 4)
+        values = torch.einsum('abcd,abcde->abce', queryheaded_x, value_proj) # [B, H, Q, E]
         if self.qkv_bias:
-            lb = self.bias_generator(x)
-            kv_on_q += lb
-        
-        # Inverse Attention
-        head_value_generators = (reverse_attn @ value_inputs)
-        # partial_query_weights = self.G(head_value_generators).reshape(BW, self.num_heads, K2, self.embed_dim, self.embed_dim)
-        # query_projection_weights = self.complete_projection_weight(partial_query_weights)
-        query_projection_weights = torch.einsum('abcd,bdef->abcef', head_value_generators, head_G)
-        q_on_kv = (query_inputs.unsqueeze(-2) @ query_projection_weights).squeeze(-2).transpose(-3, -2).flatten(2)
-
-        if self.qkv_bias:
-            individual_value_biases = self.bias_generator(x).reshape(BW, K2, self.num_heads, self.embed_dim).transpose(1, 2)
-            gb = (reverse_attn @ individual_value_biases).transpose(1, 2).flatten(2)
-            q_on_kv += gb
-
-        # gb = self.bias_generator(head_value_generators).transpose(-3, -2).flatten(2)
-        # q_on_kv = gWl + gb
-
-        convex_weight = torch.sigmoid(self.selection_lambda)
-        if self.add_layer_norms:
-            kv_on_q = self.msa_norm(kv_on_q)
-            q_on_kv = self.isa_norm(q_on_kv)
-        output = convex_weight * kv_on_q + (1 - convex_weight) * q_on_kv
+            value_bias = self.B(bottleneck).reshape(BW, K2, self.num_heads, self.embed_dim).permute(0, 2, 1, 3)
+            values += value_bias
+        output = values.transpose(1, 2).flatten(2)
             
-        # if self.is_bidirectional:
-        #     isa_outputs = self.apply_inverse_attention(x, reverse_attn)
-        #     forget_weight = torch.sigmoid(self.selection_lambda)
-
-        #     if self.add_layer_norms:
-                
-        #         isa_outputs = isa_outputs.flatten(0,1)
-        #         sa_outputs = sa_outputs.flatten(0,1)
-
-        #         tensor_shape = isa_outputs.shape
-        #         isa_outputs = self.isa_norm(isa_outputs)
-        #         sa_outputs = self.msa_norm(sa_outputs)
-
-        #         isa_outputs = isa_outputs.reshape(BW, K2, C)
-        #         sa_outputs = sa_outputs.reshape(BW, K2, C)
-
-        #     output = sa_outputs * forget_weight + isa_outputs * (1. - forget_weight)
-        # else:
-        #     output = sa_outputs
-
         x = self.proj(output)
         x = self.proj_drop(x)
         return x
@@ -330,3 +255,5 @@ class BiDirectionalWindowAttention(nn.Module):
     
     def flops(self, N):
         return self.reverse_flops(N) + self.forward_flops(N)
+    
+    # self.orthogonal_regularization()

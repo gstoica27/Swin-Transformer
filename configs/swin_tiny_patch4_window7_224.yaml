@@ -2,7 +2,7 @@ DATA:
   DATASET: imagenet
   DATA_PATH: /srv/datasets/ImageNet
 MODEL:
-  TYPE: biswin
+  TYPE: gradswin
   NAME: swin_tiny_patch4_window7_224
   DROP_PATH_RATE: 0.2
   SWIN:
@@ -11,19 +11,27 @@ MODEL:
     NUM_HEADS: [ 3, 6, 12, 24 ]
     WINDOW_SIZE: 7
     BIDIRECTIONAL_ATTENTION_LOCATIONS: []
-    BIDIRECTION_ATTENTION_APPLY_NORM: False
 TRAIN:
-  ENFORCE_ATTENTION_ORTHONOGALITY: False
-  ORTHOGONALITY_LAMBDA: 0.
-  ALL_ORTHOGONALITY_LAMBDA: 0.
-  BISA_LAMBDA_REGIME: (100., 300)
   EPOCHS: 300
-  WARMUP_EPOCHS: 20
-FINETUNING:
-  APPLY_FINETUNING: True
-  BASE_MODEL: /srv/share4/gstoica3/checkpoints/swin_transformer/swin_tiny_patch4_window7_224/baseline_fp32/ckpt_epoch_294.pth
-  # BASE_MODEL: /srv/share4/gstoica3/checkpoints/ContinualLearningHybridBaseFirstStageHead/biswin_tiny_patch4_window7_224/CorrectTransposeSoftmaxSelectionLambdaMatrix/ckpt_epoch_3.pth
-  FREEZE_BASE: False
-  STOP_EPOCH: 50
-  TRAINABLES: layer
-  BASELINE_USES_SWIN_CFG: False
+#   SWIN:
+#     EMBED_DIM: 96
+#     DEPTHS: [ 2, 2, 6, 2 ]
+#     NUM_HEADS: [ 3, 6, 12, 24 ]
+#     WINDOW_SIZE: 7
+#     BIDIRECTIONAL_ATTENTION_LOCATIONS: []
+#     BIDIRECTION_ATTENTION_APPLY_NORM: False
+# TRAIN:
+#   ENFORCE_ATTENTION_ORTHONOGALITY: False
+#   ORTHOGONALITY_LAMBDA: 0.
+#   ALL_ORTHOGONALITY_LAMBDA: 0.
+#   BISA_LAMBDA_REGIME: (100., 300)
+#   EPOCHS: 300
+#   WARMUP_EPOCHS: 20
+# FINETUNING:
+#   APPLY_FINETUNING: False
+#   BASE_MODEL: /srv/share4/gstoica3/checkpoints/swin_transformer/swin_tiny_patch4_window7_224/baseline_fp32/ckpt_epoch_294.pth
+#   # BASE_MODEL: /srv/share4/gstoica3/checkpoints/ContinualLearningHybridBaseFirstStageHead/biswin_tiny_patch4_window7_224/CorrectTransposeSoftmaxSelectionLambdaMatrix/ckpt_epoch_3.pth
+#   FREEZE_BASE: False
+#   STOP_EPOCH: 50
+#   TRAINABLES: layer
+#   BASELINE_USES_SWIN_CFG: False
