@@ -136,7 +136,7 @@ def main(config, logger):
         config.MODEL.RESUME = False
         config.MODEL.PRETRAINED = False
         config.freeze()
-        acc1, acc5, loss = validate(config, data_loader_val, model, logger)
+        acc1, acc5, loss = validate(config, data_loader_val, model, logger, incorrect_indices_write_path=os.path.join(config.OUTPUT, 'wrong_indices.txt'))
         logger.info('Trainable arguments: {}'.format([i[0] for i in model_without_ddp.named_parameters() if i[1].requires_grad]))
 
     optimizer = build_optimizer(config, model)
@@ -156,14 +156,14 @@ def main(config, logger):
 
     if config.MODEL.RESUME:
         max_valid_accuracy, missing_tuple = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger, scaler)
-        acc1, acc5, loss = validate(config, data_loader_val, model, logger)
+        acc1, acc5, loss = validate(config, data_loader_val, model, logger, incorrect_indices_write_path=os.path.join(config.OUTPUT, 'wrong_indices.txt'))
         logger.info(f"Accuracy of the network on the {len(data_loader_val) * args.batch_size} test images: {acc1:.1f}%")
         if config.EVAL_MODE:
             return
 
     if config.MODEL.PRETRAINED and (not config.MODEL.RESUME):
         load_pretrained(config, model_without_ddp, logger)
-        acc1, acc5, loss = validate(config, data_loader_val, model, logger)
+        acc1, acc5, loss = validate(config, data_loader_val, model, logger, incorrect_indices_write_path=os.path.join(config.OUTPUT, 'wrong_indices.txt'))
         logger.info(f"Accuracy of the network on the {len(data_loader_val) * args.batch_size} test images: {acc1:.1f}%")
 
     if config.THROUGHPUT_MODE:
@@ -360,7 +360,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
 
 
 @torch.no_grad()
-def validate(config, data_loader, model, logger):
+def validate(config, data_loader, model, logger, incorrect_indices_write_path=None):
     criterion = torch.nn.CrossEntropyLoss()
     model.eval()
 
@@ -369,8 +369,10 @@ def validate(config, data_loader, model, logger):
     acc1_meter = AverageMeter()
     acc5_meter = AverageMeter()
 
+    all_wrong_indices = []
+
     end = time.time()
-    for idx, (images, target) in enumerate(data_loader):
+    for batch_idx, (images, target) in enumerate(data_loader):
         images = images.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
 
@@ -380,6 +382,7 @@ def validate(config, data_loader, model, logger):
 
             # measure accuracy and record loss
             loss = criterion(output, target)
+        # pdb.set_trace()
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
         acc1 = reduce_tensor(acc1)
@@ -390,14 +393,21 @@ def validate(config, data_loader, model, logger):
         acc1_meter.update(acc1.item(), target.size(0))
         acc5_meter.update(acc5.item(), target.size(0))
 
+        predictions = output.argmax(1)
+        is_incorrect = (target != predictions).cpu().numpy()
+        indices = batch_idx * 64 + np.arange(images.shape[0])
+        wrong_indices = indices[is_incorrect]
+
+        all_wrong_indices.append(wrong_indices)
+
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if idx % config.PRINT_FREQ == 0:
+        if batch_idx % config.PRINT_FREQ == 0:
             memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
             logger.info(
-                f'Test: [{idx}/{len(data_loader)}]\t'
+                f'Test: [{batch_idx}/{len(data_loader)}]\t'
                 f'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                 f'Loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t'
                 f'Acc@1 {acc1_meter.val:.3f} ({acc1_meter.avg:.3f})\t'
@@ -413,6 +423,15 @@ def validate(config, data_loader, model, logger):
         for name, param in lambda_params.items():
             logger.info(f'{name}: {param}')
         logger.info('=========================')
+
+    all_wrong_indices = np.concatenate(all_wrong_indices)
+
+    incorrect_indices_write_path = os.path.join(config.OUTPUT, 'wrong_indices.txt')
+
+    logger.info(f'SAVING WRONG INDICES TO: {incorrect_indices_write_path}')
+    if incorrect_indices_write_path is not None:
+        np.savetxt(incorrect_indices_write_path, all_wrong_indices)
+
     return acc1_meter.avg, acc5_meter.avg, loss_meter.avg
 
 
