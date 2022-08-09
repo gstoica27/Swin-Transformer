@@ -10,7 +10,7 @@ MODEL:
     DEPTHS: [ 2, 2, 6, 2 ]
     NUM_HEADS: [ 3, 6, 12, 24 ]
     WINDOW_SIZE: 7
-    BIDIRECTIONAL_ATTENTION_LOCATIONS: [0, 1, 2, 3]
+    BIDIRECTIONAL_ATTENTION_LOCATIONS: [0]
     BIDIRECTION_ATTENTION_APPLY_NORM: False
 TRAIN:
   ENFORCE_ATTENTION_ORTHONOGALITY: False
@@ -18,11 +18,12 @@ TRAIN:
   ALL_ORTHOGONALITY_LAMBDA: 0.
   BISA_LAMBDA_REGIME: (0., 300)
   EPOCHS: 300
-  WARMUP_EPOCHS: 10
+  WARMUP_EPOCHS: 20
 FINETUNING:
-  APPLY_FINETUNING: False
+  APPLY_FINETUNING: True
   # BASE_MODEL: /srv/share4/gstoica3/checkpoints/swin_transformer/swin_tiny_patch4_window7_224/baseline_fp32/ckpt_epoch_294.pth
   # BASE_MODEL: /srv/share4/gstoica3/checkpoints/ImageNetContinualSwinBiSA0/biswin_tiny_patch4_window7_224/NoNorm_Block_FirstStage/ckpt_epoch_50.pth
+  BASE_MODEL: /srv/share4/gstoica3/checkpoints/ImageNetScratchSwinBiSA0/biswin_tiny_patch4_window7_224/NoNorm/ckpt_epoch_292.pth
   FREEZE_BASE: True
   STOP_EPOCH: 50
   TRAINABLES: block
